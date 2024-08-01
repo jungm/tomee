@@ -24,22 +24,15 @@ import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import jakarta.json.Json;
-import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.Client;
 import jakarta.ws.rs.client.ClientBuilder;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import java.io.StringReader;
 import java.net.URL;
-import java.util.stream.Stream;
 
-import static junit.framework.TestCase.assertTrue;
 import static org.junit.Assert.assertEquals;
 
 @RunWith(Arquillian.class)
@@ -69,7 +62,6 @@ public class WeatherServiceTest {
     }
 
     @Test
-    @Ignore
     public void testCountedMetric() {
         WebTarget webTarget = this.client.target(this.base.toExternalForm());
         final String message =  webTarget.path("/weather/day/status")
@@ -78,68 +70,17 @@ public class WeatherServiceTest {
 
         assertEquals("Hi, today is a sunny day!", message);
 
-        final String metricPath = "/metrics/application/weather_day_status";
-        assertPrometheusFormat(metricPath);
-        assertJsonFormat(metricPath);
-    }
-
-    private void assertPrometheusFormat(final String metricPath) {
-        WebTarget webTarget = this.client.target(this.base.toExternalForm());
-        final String metric =  webTarget.path(metricPath)
+        final String prometheusMetric = webTarget.path("/metrics")
+                .queryParam("scope", "application")
+                .queryParam("name", "weather_day_status")
                 .request()
                 .accept(MediaType.TEXT_PLAIN)
                 .get(String.class);
-        assertEquals("# HELP application_weather_day_status_total This metric shows the weather status of the day.\n" +
-                     "# TYPE application_weather_day_status_total counter\n" +
-                     "application_weather_day_status_total{weather=\"day\"} 1.0\n", metric);
-    }
 
-    private void assertJsonFormat(final String metricPath) {
-        WebTarget webTarget = this.client.target(this.base.toExternalForm());
-
-        final String metric = webTarget.path(metricPath)
-                .request()
-                .accept(MediaType.APPLICATION_JSON)
-                .get(String.class);
-
-        assertEquals("{\n" +
-                     "  \"weather_day_status;weather=day\":1\n" +
-                     "}", metric);
-    }
-
-    @Test
-    @Ignore
-    public void testCountedMetricMetadata() {
-        WebTarget webTarget = this.client.target(this.base.toExternalForm());
-        final Response response = webTarget
-                .path("/metrics/application/weather_day_status")
-                .request()
-                .accept(MediaType.APPLICATION_JSON)
-                .options();
-        final String metaData = response.readEntity(String.class);
-        JsonObject metadataJson = Json.createReader(new StringReader(metaData)).readObject();
-
-        final String expected = "{\n" +
-                "  \"weather_day_status\": {\n" +
-                "    \"description\": \"This metric shows the weather status of the day.\",\n" +
-                "    \"displayName\": \"Weather Day Status\",\n" +
-                "    \"name\": \"weather_day_status\",\n" +
-                "    \"reusable\": false,\n" +
-                "    \"tags\": \"\",\n" +
-                "    \"type\": \"counter\",\n" +
-                "    \"typeRaw\": \"COUNTER\",\n" +
-                "    \"unit\": \"none\"\n" +
-                "  }\n" +
-                "}";
-
-        JsonObject expectedJson = Json.createReader(new StringReader(expected)).readObject();
-        assertEquals(expectedJson.keySet().size(), metadataJson.keySet().size());
-
-        String[] expectedKeys = new String[]{"description", "displayName", "name", "reusable", "tags", "type", "typeRaw", "unit"};
-        Stream.of(expectedKeys).forEach((text) -> {
-          assertTrue("Expected: " + text
-                  + " to be present in " + expected,
-                  expectedJson.getJsonObject("weather_day_status").get(text) != null);
-        });
+        assertEquals("""
+                # HELP weather_day_status_total This metric shows the weather status of the day.
+                # TYPE weather_day_status_total counter
+                weather_day_status_total{mp_scope="application",weather="day",} 1.0
+                """, prometheusMetric);
     }
 }

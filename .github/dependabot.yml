@@ -24,6 +24,15 @@ updates:
       time: '04:00'
     open-pull-requests-limit: 10
 
+  - package-ecosystem: maven
+    directory: "/boms"
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: maven
+    directory: "/examples"
+    ignore:
+      - dependency-name: "*"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

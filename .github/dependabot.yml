@@ -26,10 +26,14 @@ updates:
 
   - package-ecosystem: maven
     directory: "/boms"
+    schedule:
+      interval: weekly
     ignore:
       - dependency-name: "*"
   - package-ecosystem: maven
     directory: "/examples"
+    schedule:
+      interval: weekly
     ignore:
       - dependency-name: "*"
 

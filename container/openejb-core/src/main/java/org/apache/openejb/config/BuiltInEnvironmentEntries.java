@@ -17,7 +17,6 @@
 
 package org.apache.openejb.config;
 
-import org.apache.openejb.BeanContext;
 import org.apache.openejb.OpenEJBException;
 import org.apache.openejb.jee.EjbJar;
 import org.apache.openejb.jee.EnterpriseBean;
@@ -71,7 +70,9 @@ public class BuiltInEnvironmentEntries implements DynamicDeployer {
             }
 
             for (final EnterpriseBean consumer : ejbJar.getEnterpriseBeans()) {
-                add(consumer, module, appModule, addDefaults && BeanContext.Comp.class.getName().equals(consumer.getEjbClass()));
+                // Jakarta Concurrency default resources are required in component namespaces,
+                // including regular EJB components, not only the generated Comp bean.
+                add(consumer, module, appModule, addDefaults);
             }
         }
 
@@ -92,7 +93,7 @@ public class BuiltInEnvironmentEntries implements DynamicDeployer {
         add(jndi.getResourceEnvRefMap(), new ResourceEnvRef().name("java:comp/TransactionSynchronizationRegistry").type(TransactionSynchronizationRegistry.class));
 
         if (defaults) {
-            // From: https://jakarta.ee/specifications/concurrency/3.0/jakarta-concurrency-spec-3.0.pdf
+            // From: https://jakarta.ee/specifications/concurrency/3.1/jakarta-concurrency-spec-3.1.html
             // Jakarta Concurrency §3.1.4.3
             add(jndi.getResourceEnvRefMap(), new ResourceEnvRef().name("java:comp/DefaultManagedExecutorService").type(ManagedExecutorService.class));
 

@@ -383,6 +383,9 @@ public class AnnotationDeployer implements DynamicDeployer {
             appModule = builtInEnvironmentEntries.deploy(appModule);
             appModule = processAnnotatedBeans.deploy(appModule);
             appModule = mergeWebappJndiContext.deploy(appModule);
+            // Annotation processing and merge steps can rebuild JNDI consumers; re-apply built-ins
+            // so component-level defaults remain present in the final deployment model.
+            appModule = builtInEnvironmentEntries.deploy(appModule);
             appModule = mBeanDeployer.deploy(appModule);
             return appModule;
         } finally {
@@ -4127,6 +4130,10 @@ public class AnnotationDeployer implements DynamicDeployer {
                 contextService.getUnchanged().addAll(Arrays.asList(definition.unchanged()));
             }
 
+            if (contextService.getQualifier().isEmpty()) {
+                addQualifiers(contextService.getQualifier(), definition.qualifiers());
+            }
+
             consumer.getContextServiceMap().put(definition.name(), contextService);
         }
 
@@ -4140,6 +4147,12 @@ public class AnnotationDeployer implements DynamicDeployer {
             managedExecutor.getContextService().setvalue(definition.context());
             managedExecutor.setHungTaskThreshold(definition.hungTaskThreshold());
             managedExecutor.setMaxAsync(definition.maxAsync() == -1 ? null : definition.maxAsync());
+            if (managedExecutor.getQualifiers().isEmpty()) {
+                addQualifiers(managedExecutor.getQualifiers(), definition.qualifiers());
+            }
+            if (managedExecutor.isVirtual() == null) {
+                managedExecutor.setVirtual(definition.virtual());
+            }
 
             consumer.getManagedExecutorMap().put(definition.name(), managedExecutor);
         }
@@ -4154,6 +4167,12 @@ public class AnnotationDeployer implements DynamicDeployer {
             managedScheduledExecutor.getContextService().setvalue(definition.context());
             managedScheduledExecutor.setHungTaskThreshold(definition.hungTaskThreshold());
             managedScheduledExecutor.setMaxAsync(definition.maxAsync() == -1 ? null : definition.maxAsync());
+            if (managedScheduledExecutor.getQualifiers().isEmpty()) {
+                addQualifiers(managedScheduledExecutor.getQualifiers(), definition.qualifiers());
+            }
+            if (managedScheduledExecutor.isVirtual() == null) {
+                managedScheduledExecutor.setVirtual(definition.virtual());
+            }
 
             consumer.getManagedScheduledExecutorMap().put(definition.name(), managedScheduledExecutor);
         }
@@ -4167,8 +4186,20 @@ public class AnnotationDeployer implements DynamicDeployer {
             managedThreadFactory.setContextService(new JndiName());
             managedThreadFactory.getContextService().setvalue(definition.context());
             managedThreadFactory.setPriority(definition.priority());
+            if (managedThreadFactory.getQualifiers().isEmpty()) {
+                addQualifiers(managedThreadFactory.getQualifiers(), definition.qualifiers());
+            }
+            if (managedThreadFactory.isVirtual() == null) {
+                managedThreadFactory.setVirtual(definition.virtual());
+            }
 
             consumer.getManagedThreadFactoryMap().put(definition.name(), managedThreadFactory);
+        }
+
+        private void addQualifiers(final List<String> target, final Class<?>[] qualifiers) {
+            for (final Class<?> qualifier : qualifiers) {
+                target.add(qualifier.getName());
+            }
         }
 
         private void buildContext(final JndiConsumer consumer, final Member member) {

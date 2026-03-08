@@ -519,7 +519,7 @@ public class JndiEncBuilder {
 
             for (final ResourceInfo resource : config.facilities.resources) {
                 final String jndiName = resource.jndiName;
-                if (jndiName != null && !jndiName.isEmpty() && isNotGobalOrIsHoldByThisApp(resource, scope)) {
+                if (jndiName != null && !jndiName.isEmpty() && isVisibleInScope(resource, scope)) {
                     final String refName = "openejb/Resource/" + resource.id;
                     final Object reference = new IntraVmJndiReference(refName);
                     final String boundName = normalize(jndiName);
@@ -536,6 +536,19 @@ public class JndiEncBuilder {
     private boolean isNotGobalOrIsHoldByThisApp(final ResourceInfo info, final JndiScope scope) {
         return !info.jndiName.startsWith("global/")
             || info.originAppName != null && info.originAppName.equals(moduleId) && JndiScope.global.equals(scope);
+    }
+
+    private boolean isVisibleInScope(final ResourceInfo info, final JndiScope scope) {
+        if (!isNotGobalOrIsHoldByThisApp(info, scope)) {
+            return false;
+        }
+        if (!info.jndiName.startsWith("module/")) {
+            return true;
+        }
+        if (info.originModuleName == null || info.originModuleName.isEmpty()) {
+            return true;
+        }
+        return info.originModuleName.equals(moduleId);
     }
 
     private void addSpecialCompBindings(final Map<String, Object> bindings) {

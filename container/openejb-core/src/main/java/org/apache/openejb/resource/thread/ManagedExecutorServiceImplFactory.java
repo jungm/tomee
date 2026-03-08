@@ -17,6 +17,7 @@
 package org.apache.openejb.resource.thread;
 
 import jakarta.enterprise.concurrent.ManagedThreadFactory;
+import jakarta.enterprise.concurrent.ManagedExecutorService;
 import org.apache.openejb.loader.SystemInstance;
 import org.apache.openejb.spi.ContainerSystem;
 import org.apache.openejb.threads.impl.ContextServiceImpl;
@@ -39,6 +40,8 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 
 public class ManagedExecutorServiceImplFactory {
+    private static final Logger LOGGER = Logger.getInstance(LogCategory.OPENEJB, ManagedExecutorServiceImplFactory.class);
+
     private int core = 5;
     private int max = 25;
     private Duration keepAlive = new Duration("5 second");
@@ -46,8 +49,9 @@ public class ManagedExecutorServiceImplFactory {
     private String threadFactory;
 
     private String context;
+    private boolean virtual;
 
-    public static ManagedExecutorServiceImpl lookup(String name) throws NamingException {
+    public static ManagedExecutorService lookupManagedExecutor(String name) throws NamingException {
         Object obj;
         try {
             obj = InitialContext.doLookup(name);
@@ -61,7 +65,7 @@ public class ManagedExecutorServiceImplFactory {
             obj = ctx.lookup("openejb/Resource/" + name);
         }
 
-        if (!(obj instanceof ManagedExecutorServiceImpl mes)) {
+        if (!(obj instanceof ManagedExecutorService mes)) {
             throw new IllegalArgumentException("Resource with id " + name
                     + " is not a ManagedExecutorService, but is " + obj.getClass().getName());
         }
@@ -69,15 +73,35 @@ public class ManagedExecutorServiceImplFactory {
         return mes;
     }
 
+    public static ManagedExecutorServiceImpl lookup(final String name) throws NamingException {
+        final ManagedExecutorService managedExecutorService = lookupManagedExecutor(name);
+        if (!(managedExecutorService instanceof ManagedExecutorServiceImpl mes)) {
+            throw new IllegalArgumentException("Resource with id " + name
+                    + " is not a ManagedExecutorServiceImpl, but is " + managedExecutorService.getClass().getName());
+        }
+        return mes;
+    }
+
     public ManagedExecutorServiceImpl create() {
-        return new ManagedExecutorServiceImpl(createExecutorService(), ContextServiceImplFactory.lookupOrDefault(context));
+        final ContextServiceImpl contextService = ContextServiceImplFactory.lookupOrDefault(context);
+        return new ManagedExecutorServiceImpl(createExecutorService(contextService), contextService);
     }
 
     public ManagedExecutorServiceImpl create(final ContextServiceImpl contextService) {
-        return new ManagedExecutorServiceImpl(createExecutorService(), contextService);
+        return new ManagedExecutorServiceImpl(createExecutorService(contextService), contextService);
     }
 
-    private ExecutorService createExecutorService() {
+    private ExecutorService createExecutorService(final ContextServiceImpl contextService) {
+        if (virtual && VirtualThreadSupport.isSupported()) {
+            final ManagedThreadFactory managedThreadFactory = new ManagedThreadFactoryImpl(
+                    ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, contextService, true);
+            return VirtualThreadSupport.newThreadPerTaskExecutor(managedThreadFactory);
+        }
+        if (virtual) {
+            LOGGER.warning("ManagedExecutorService configured with virtual=true but virtual threads are not supported by this JVM runtime. "
+                    + "Falling back to platform threads.");
+        }
+
         final BlockingQueue<Runnable> blockingQueue;
         if (queue < 0) {
             blockingQueue = new LinkedBlockingQueue<>();
@@ -90,16 +114,15 @@ public class ManagedExecutorServiceImplFactory {
         ManagedThreadFactory managedThreadFactory;
         try {
             managedThreadFactory = "org.apache.openejb.threads.impl.ManagedThreadFactoryImpl".equals(threadFactory) ?
-                    new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, ContextServiceImplFactory.lookupOrDefault(context)) :
+                    new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, contextService, false) :
                     ThreadFactories.findThreadFactory(threadFactory);
         } catch (final Exception e) {
-            Logger.getInstance(LogCategory.OPENEJB, ManagedExecutorServiceImplFactory.class).warning("Can't create configured thread factory: " + threadFactory, e);
-            managedThreadFactory = new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, ContextServiceImplFactory.lookupOrDefault(context));
+            LOGGER.warning("Can't create configured thread factory: " + threadFactory, e);
+            managedThreadFactory = new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, contextService, false);
         }
 
         if (core > max) {
-            Logger.getInstance(LogCategory.OPENEJB, ManagedExecutorServiceImplFactory.class)
-                    .warning("Core size (=" + core + ") is bigger than Max size (=" + max + "), lowering Core to Max");
+            LOGGER.warning("Core size (=" + core + ") is bigger than Max size (=" + max + "), lowering Core to Max");
 
             core = max;
         }
@@ -133,5 +156,9 @@ public class ManagedExecutorServiceImplFactory {
 
     public void setContext(final String context) {
         this.context = context;
+    }
+
+    public void setVirtual(final boolean virtual) {
+        this.virtual = virtual;
     }
 }

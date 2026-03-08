@@ -373,6 +373,7 @@ Declarable in tomee.xml via
     KeepAlive = 5 s
     Queue = 15
     ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+    Virtual = false
     Lazy = true
 </Resource>
 ----
@@ -387,6 +388,7 @@ Foo.Max = 25
 Foo.KeepAlive = 5 s
 Foo.Queue = 15
 Foo.ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+Foo.Virtual = false
 Foo.Lazy = true
 ----
 
@@ -412,6 +414,10 @@ The queue type size.
 
 The thread factory implementation class.
 
+==== Virtual
+
+If set to true, request virtual-thread-backed execution. On runtimes that do not support virtual threads this fails resource creation.
+
 ==== Lazy
 
 If set to true the pool is created when first accessed otherwise it is created at startup.
@@ -428,6 +434,7 @@ Declarable in tomee.xml via
 <Resource id="Foo" type="ManagedScheduledExecutorService">
     Core = 5
     ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+    Virtual = false
     Lazy = true
 </Resource>
 ----
@@ -439,6 +446,7 @@ Declarable in properties via
 Foo = new://Resource?type=ManagedScheduledExecutorService
 Foo.Core = 5
 Foo.ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+Foo.Virtual = false
 Foo.Lazy = true
 ----
 
@@ -457,6 +465,7 @@ Declarable in tomee.xml via
 ----
 <Resource id="Foo" type="ManagedThreadFactory">
     Prefix = openejb-managed-thread-
+    Virtual = false
     Lazy = true
 </Resource>
 ----
@@ -467,6 +476,7 @@ Declarable in properties via
 ----
 Foo = new://Resource?type=ManagedThreadFactory
 Foo.Prefix = openejb-managed-thread-
+Foo.Virtual = false
 Foo.Lazy = true
 ----
 
@@ -475,6 +485,10 @@ Foo.Lazy = true
 ==== Prefix
 
 The thread prefix (suffixed with thread id).
+
+==== Virtual
+
+If set to true, request virtual threads. On runtimes that do not support virtual threads this fails resource creation.
 
 
 

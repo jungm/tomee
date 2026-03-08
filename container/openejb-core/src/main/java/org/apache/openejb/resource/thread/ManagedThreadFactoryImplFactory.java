@@ -19,16 +19,26 @@ package org.apache.openejb.resource.thread;
 
 import org.apache.openejb.threads.impl.ContextServiceImplFactory;
 import org.apache.openejb.threads.impl.ManagedThreadFactoryImpl;
+import org.apache.openejb.util.LogCategory;
+import org.apache.openejb.util.Logger;
 
 import jakarta.enterprise.concurrent.ManagedThreadFactory;
 
 public class ManagedThreadFactoryImplFactory {
+    private static final Logger LOGGER = Logger.getInstance(LogCategory.OPENEJB, ManagedThreadFactoryImplFactory.class);
+
     private String prefix = "openejb-managed-thread-";
     private Integer priority;
     private String context;
+    private boolean virtual;
 
     public ManagedThreadFactory create() {
-        return new ManagedThreadFactoryImpl(prefix, priority, ContextServiceImplFactory.lookupOrDefault(context));
+        final boolean useVirtual = virtual && VirtualThreadSupport.isSupported();
+        if (virtual && !useVirtual) {
+            LOGGER.warning("ManagedThreadFactory configured with virtual=true but virtual threads are not supported by this JVM runtime. "
+                    + "Falling back to platform threads.");
+        }
+        return new ManagedThreadFactoryImpl(prefix, priority, ContextServiceImplFactory.lookupOrDefault(context), useVirtual);
     }
 
     public void setPrefix(final String prefix) {
@@ -41,5 +51,9 @@ public class ManagedThreadFactoryImplFactory {
 
     public void setContext(final String context) {
         this.context = context;
+    }
+
+    public void setVirtual(final boolean virtual) {
+        this.virtual = virtual;
     }
 }

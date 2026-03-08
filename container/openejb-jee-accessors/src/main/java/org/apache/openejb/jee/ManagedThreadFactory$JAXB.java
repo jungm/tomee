@@ -84,6 +84,7 @@ public class ManagedThreadFactory$JAXB
         ManagedThreadFactory managedThreadFactory = new ManagedThreadFactory();
         context.beforeUnmarshal(managedThreadFactory, LifecycleCallback.NONE);
 
+        List<String> qualifiers = null;
         List<Property> properties = null;
 
         // Check xsi:type
@@ -119,6 +120,22 @@ public class ManagedThreadFactory$JAXB
                 // ELEMENT: priority
                 Integer priority = Integer.valueOf(elementReader.getElementText());
                 managedThreadFactory.priority = priority;
+            } else if (("qualifier" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
+                // ELEMENT: qualifiers
+                String qualifiersItem = elementReader.getElementText();
+                if (qualifiers == null) {
+                    qualifiers = managedThreadFactory.qualifiers;
+                    if (qualifiers!= null) {
+                        qualifiers.clear();
+                    } else {
+                        qualifiers = new ArrayList<>();
+                    }
+                }
+                qualifiers.add(qualifiersItem);
+            } else if (("virtual" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
+                // ELEMENT: virtual
+                Boolean virtual = Boolean.valueOf(elementReader.getElementText());
+                managedThreadFactory.virtual = virtual;
             } else if (("property" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
                 // ELEMENT: properties
                 Property propertiesItem = readProperty(elementReader, context);
@@ -132,8 +149,11 @@ public class ManagedThreadFactory$JAXB
                 }
                 properties.add(propertiesItem);
             } else {
-                context.unexpectedElement(elementReader, new QName("http://java.sun.com/xml/ns/javaee", "description"), new QName("http://java.sun.com/xml/ns/javaee", "name"), new QName("http://java.sun.com/xml/ns/javaee", "context-service-ref"), new QName("http://java.sun.com/xml/ns/javaee", "priority"), new QName("http://java.sun.com/xml/ns/javaee", "property"));
+                context.unexpectedElement(elementReader, new QName("http://java.sun.com/xml/ns/javaee", "description"), new QName("http://java.sun.com/xml/ns/javaee", "name"), new QName("http://java.sun.com/xml/ns/javaee", "context-service-ref"), new QName("http://java.sun.com/xml/ns/javaee", "priority"), new QName("http://java.sun.com/xml/ns/javaee", "qualifier"), new QName("http://java.sun.com/xml/ns/javaee", "virtual"), new QName("http://java.sun.com/xml/ns/javaee", "property"));
             }
+        }
+        if (qualifiers!= null) {
+            managedThreadFactory.qualifiers = qualifiers;
         }
         if (properties!= null) {
             managedThreadFactory.properties = properties;
@@ -200,6 +220,26 @@ public class ManagedThreadFactory$JAXB
         if (priority!= null) {
             writer.writeStartElement(prefix, "priority", "http://java.sun.com/xml/ns/javaee");
             writer.writeCharacters(Integer.toString(priority));
+            writer.writeEndElement();
+        }
+
+        // ELEMENT: qualifiers
+        List<String> qualifiers = managedThreadFactory.qualifiers;
+        if (qualifiers!= null) {
+            for (String qualifiersItem: qualifiers) {
+                if (qualifiersItem!= null) {
+                    writer.writeStartElement(prefix, "qualifier", "http://java.sun.com/xml/ns/javaee");
+                    writer.writeCharacters(qualifiersItem);
+                    writer.writeEndElement();
+                }
+            }
+        }
+
+        // ELEMENT: virtual
+        Boolean virtual = managedThreadFactory.virtual;
+        if (virtual!= null) {
+            writer.writeStartElement(prefix, "virtual", "http://java.sun.com/xml/ns/javaee");
+            writer.writeCharacters(Boolean.toString(virtual));
             writer.writeEndElement();
         }
 

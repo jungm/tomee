@@ -27,6 +27,7 @@ public class ResourceInfo extends ServiceInfo {
     public List<String> postConstructMethods;
     public List<String> preDestroyMethods;
     public String originAppName; // if define by an app
+    public String originModuleName; // for java:module scoped app-defined resources
     public List<String> aliases = new ArrayList<>();
     public List<String> dependsOn = new ArrayList<>();
 }

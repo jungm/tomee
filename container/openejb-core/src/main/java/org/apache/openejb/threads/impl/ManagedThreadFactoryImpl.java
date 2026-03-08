@@ -18,6 +18,7 @@ package org.apache.openejb.threads.impl;
 
 import jakarta.enterprise.concurrent.ManageableThread;
 import jakarta.enterprise.concurrent.ManagedThreadFactory;
+import org.apache.openejb.resource.thread.VirtualThreadSupport;
 import org.apache.openejb.threads.task.CURunnable;
 
 import java.util.concurrent.ForkJoinPool;
@@ -31,22 +32,34 @@ public class ManagedThreadFactoryImpl implements ManagedThreadFactory {
     private final ContextServiceImpl contextService;
     private final String prefix;
     private final Integer priority;
+    private final boolean virtual;
 
     // Invoked by ThreadFactories.findThreadFactory via reflection
     @SuppressWarnings("unused")
     public ManagedThreadFactoryImpl() {
-        this(DEFAULT_PREFIX, Thread.NORM_PRIORITY, ContextServiceImplFactory.getOrCreateDefaultSingleton());
+        this(DEFAULT_PREFIX, Thread.NORM_PRIORITY, ContextServiceImplFactory.getOrCreateDefaultSingleton(), false);
     }
 
     public ManagedThreadFactoryImpl(final String prefix, final Integer priority, final ContextServiceImpl contextService) {
+        this(prefix, priority, contextService, false);
+    }
+
+    public ManagedThreadFactoryImpl(final String prefix, final Integer priority, final ContextServiceImpl contextService,
+                                    final boolean virtual) {
         this.prefix = prefix;
         this.priority = priority;
         this.contextService = contextService;
+        this.virtual = virtual;
     }
 
     @Override
     public Thread newThread(final Runnable r) {
         final CURunnable wrapper = new CURunnable(r, contextService);
+        if (virtual) {
+            final Thread thread = VirtualThreadSupport.newVirtualThread(prefix + ID.incrementAndGet(), wrapper);
+            thread.setContextClassLoader(ManagedThreadFactoryImpl.class.getClassLoader());
+            return thread;
+        }
         final Thread thread = new ManagedThread(wrapper);
         thread.setDaemon(true);
         thread.setName(prefix + ID.incrementAndGet());

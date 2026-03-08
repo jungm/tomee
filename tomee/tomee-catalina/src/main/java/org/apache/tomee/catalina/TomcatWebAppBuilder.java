@@ -1701,7 +1701,7 @@ public class TomcatWebAppBuilder implements WebAppBuilder, ContextListener, Pare
     }
 
     private JndiEncBuilder getJndiBuilder(final ClassLoader classLoader, final WebAppInfo webAppInfo, final Set<Injection> injections, final Properties props) throws OpenEJBException {
-        return new JndiEncBuilder(webAppInfo.jndiEnc, injections, webAppInfo.moduleId, "Bean", null, webAppInfo.uniqueId, classLoader, props);
+        return new JndiEncBuilder(webAppInfo.jndiEnc, injections, "Bean", webAppInfo.moduleId, null, webAppInfo.uniqueId, classLoader, props);
     }
 
     /**

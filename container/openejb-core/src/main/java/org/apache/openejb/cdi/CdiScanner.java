@@ -56,8 +56,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static java.util.Arrays.asList;
-
 /**
  * @version $Rev:$ $Date:$
  */
@@ -143,11 +141,14 @@ public class CdiScanner implements BdaScannerService {
                 continue;
             }
 
-            if (appInfo.webAppAlone || !ejbJar.webapp) {
+            if (appInfo.webAppAlone || !ejbJar.webapp || startupObject.isFromWebApp()) {
                 // "manual" extension to avoid to add it through SPI mecanism
-                classes.addAll(asList(INTERNAL_INTERCEPTORS));
                 for (final Class<?> interceptor : INTERNAL_INTERCEPTORS) {
-                    interceptorsManager.addEnabledInterceptorClass(interceptor);
+                    final Class<?> interceptorClass = load(interceptor.getName(), classLoader);
+                    if (interceptorClass != null) {
+                        classes.add(interceptorClass);
+                        interceptorsManager.addEnabledInterceptorClass(interceptorClass);
+                    }
                 }
             }
 

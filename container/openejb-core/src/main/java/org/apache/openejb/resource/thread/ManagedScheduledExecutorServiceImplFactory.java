@@ -34,21 +34,33 @@ public class ManagedScheduledExecutorServiceImplFactory {
     private String threadFactory = ManagedThreadFactoryImpl.class.getName();
 
     private String context;
+    private boolean virtual;
 
     public ManagedScheduledExecutorServiceImpl create(final ContextServiceImpl contextService) {
-        return new ManagedScheduledExecutorServiceImpl(createScheduledExecutorService(), contextService);
+        return new ManagedScheduledExecutorServiceImpl(createScheduledExecutorService(contextService), contextService);
     }
     public ManagedScheduledExecutorServiceImpl create() {
-        return new ManagedScheduledExecutorServiceImpl(createScheduledExecutorService(), ContextServiceImplFactory.lookupOrDefault(context));
+        final ContextServiceImpl contextService = ContextServiceImplFactory.lookupOrDefault(context);
+        return new ManagedScheduledExecutorServiceImpl(createScheduledExecutorService(contextService), contextService);
     }
 
-    private ScheduledExecutorService createScheduledExecutorService() {
+    private ScheduledExecutorService createScheduledExecutorService(final ContextServiceImpl contextService) {
+        if (virtual && !VirtualThreadSupport.isSupported()) {
+            Logger.getInstance(LogCategory.OPENEJB, ManagedScheduledExecutorServiceImplFactory.class)
+                    .warning("ManagedScheduledExecutorService configured with virtual=true but virtual threads are not supported by this JVM runtime. "
+                            + "Falling back to platform threads.");
+        }
+
         ManagedThreadFactory managedThreadFactory;
-        try {
-            managedThreadFactory = ThreadFactories.findThreadFactory(threadFactory);
-        } catch (final Exception e) {
-            Logger.getInstance(LogCategory.OPENEJB, ManagedScheduledExecutorServiceImplFactory.class).warning("Unable to create configured thread factory: " + threadFactory, e);
-            managedThreadFactory = new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, ContextServiceImplFactory.lookupOrDefault(context));
+        if (virtual && VirtualThreadSupport.isSupported()) {
+            managedThreadFactory = new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, contextService, true);
+        } else {
+            try {
+                managedThreadFactory = ThreadFactories.findThreadFactory(threadFactory);
+            } catch (final Exception e) {
+                Logger.getInstance(LogCategory.OPENEJB, ManagedScheduledExecutorServiceImplFactory.class).warning("Unable to create configured thread factory: " + threadFactory, e);
+                managedThreadFactory = new ManagedThreadFactoryImpl(ManagedThreadFactoryImpl.DEFAULT_PREFIX, null, contextService, false);
+            }
         }
 
         return new ScheduledThreadPoolExecutor(core, managedThreadFactory, CURejectHandler.INSTANCE);
@@ -68,5 +80,9 @@ public class ManagedScheduledExecutorServiceImplFactory {
 
     public void setContext(String context) {
         this.context = context;
+    }
+
+    public void setVirtual(final boolean virtual) {
+        this.virtual = virtual;
     }
 }

@@ -18,6 +18,8 @@ package org.apache.openejb.threads.impl;
 
 import jakarta.enterprise.concurrent.ContextServiceDefinition;
 import jakarta.enterprise.concurrent.spi.ThreadContextProvider;
+import jakarta.enterprise.concurrent.spi.ThreadContextRestorer;
+import jakarta.enterprise.concurrent.spi.ThreadContextSnapshot;
 import org.apache.openejb.loader.SystemInstance;
 import org.apache.openejb.spi.ContainerSystem;
 import org.apache.openejb.util.Join;
@@ -26,12 +28,17 @@ import org.apache.openejb.util.Logger;
 
 import javax.naming.Context;
 import javax.naming.NamingException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.Set;
 
 public class ContextServiceImplFactory {
     public static final String AUTOMATIC_SINGLETON = "[automatic]";
@@ -163,6 +170,7 @@ public class ContextServiceImplFactory {
 
 
         final Map<String, ThreadContextProvider> threadContextProviders = new HashMap<>();
+        final Set<String> explicitlyConfiguredContextTypes = explicitlyConfiguredContextTypes();
 
         // add the in-build ThreadContextProviders
         threadContextProviders.put(ContextServiceDefinition.APPLICATION, ApplicationThreadContextProvider.INSTANCE);
@@ -181,6 +189,9 @@ public class ContextServiceImplFactory {
         resolve(resolvedPropagated, propagated, threadContextProviders);
         resolve(resolvedCleared, cleared, threadContextProviders);
         resolve(resolvedUnchanged, unchanged, threadContextProviders);
+        addDeferredProviders(resolvedPropagated, propagated, threadContextProviders);
+        addDeferredProviders(resolvedCleared, cleared, threadContextProviders);
+        addDeferredProviders(resolvedUnchanged, unchanged, threadContextProviders);
 
         if (propagated.contains(ContextServiceDefinition.ALL_REMAINING)) {
             resolvedPropagated.addAll(threadContextProviders.values());
@@ -206,6 +217,22 @@ public class ContextServiceImplFactory {
 
         resolvedPropagated.addAll(threadContextProviders.values());
         threadContextProviders.clear();
+
+        // If Remaining was selected, discover providers again at snapshot-capture time so
+        // application-provided ThreadContextProvider services are considered even when they
+        // were not visible during resource creation.
+        final Set<String> remainingExclusions = new LinkedHashSet<>(explicitlyConfiguredContextTypes);
+        collectProviderTypes(remainingExclusions, resolvedPropagated);
+        collectProviderTypes(remainingExclusions, resolvedCleared);
+        collectProviderTypes(remainingExclusions, resolvedUnchanged);
+
+        if (propagated.contains(ContextServiceDefinition.ALL_REMAINING)) {
+            resolvedPropagated.add(new DeferredRemainingThreadContextProvider(remainingExclusions, false));
+        }
+
+        if (cleared.contains(ContextServiceDefinition.ALL_REMAINING)) {
+            resolvedCleared.add(new DeferredRemainingThreadContextProvider(remainingExclusions, true));
+        }
 
         // TODO: we could log the awesome work we have done to figure all this out
         // TODO: additionally, this should all be incredibly easy to unit test
@@ -233,6 +260,193 @@ public class ContextServiceImplFactory {
         for (String specifiedProviderName : specified) {
             if (availableProviders.containsKey(specifiedProviderName)) {
                 providers.add(availableProviders.remove(specifiedProviderName));
+            }
+        }
+    }
+
+    private Set<String> explicitlyConfiguredContextTypes() {
+        final Set<String> result = new LinkedHashSet<>();
+        addConfiguredContextTypes(result, propagated);
+        addConfiguredContextTypes(result, cleared);
+        addConfiguredContextTypes(result, unchanged);
+        return result;
+    }
+
+    private void addConfiguredContextTypes(final Set<String> target, final List<String> source) {
+        for (final String type : source) {
+            if (!ContextServiceDefinition.ALL_REMAINING.equals(type)) {
+                target.add(type);
+            }
+        }
+    }
+
+    private void addDeferredProviders(final List<ThreadContextProvider> resolved,
+                                      final List<String> specified,
+                                      final Map<String, ThreadContextProvider> availableProviders) {
+        for (final String type : specified) {
+            if (ContextServiceDefinition.ALL_REMAINING.equals(type)) {
+                continue;
+            }
+            if (availableProviders.containsKey(type) || hasProviderType(resolved, type)) {
+                continue;
+            }
+            resolved.add(new DeferredThreadContextProvider(type));
+        }
+    }
+
+    private static void collectProviderTypes(final Set<String> target, final List<ThreadContextProvider> providers) {
+        for (final ThreadContextProvider provider : providers) {
+            target.add(provider.getThreadContextType());
+        }
+    }
+
+    private static boolean hasProviderType(final List<ThreadContextProvider> providers, final String type) {
+        for (final ThreadContextProvider provider : providers) {
+            if (type.equals(provider.getThreadContextType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static ThreadContextProvider findRuntimeProvider(final String threadContextType) {
+        return discoverRuntimeProviders().get(threadContextType);
+    }
+
+    private static Map<String, ThreadContextProvider> discoverRuntimeProviders() {
+        final Map<String, ThreadContextProvider> providers = new LinkedHashMap<>();
+
+        providers.put(ContextServiceDefinition.APPLICATION, ApplicationThreadContextProvider.INSTANCE);
+        providers.put(ContextServiceDefinition.SECURITY, SecurityThreadContextProvider.INSTANCE);
+        providers.put(ContextServiceDefinition.TRANSACTION, TxThreadContextProvider.INSTANCE);
+
+        final ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+        loadWithServiceLoader(providers, tccl);
+
+        final ClassLoader fallback = ContextServiceImplFactory.class.getClassLoader();
+        if (fallback != tccl) {
+            loadWithServiceLoader(providers, fallback);
+        }
+
+        return providers;
+    }
+
+    private static void loadWithServiceLoader(final Map<String, ThreadContextProvider> providers, final ClassLoader classLoader) {
+        if (classLoader == null) {
+            return;
+        }
+
+        try {
+            for (final ThreadContextProvider provider : ServiceLoader.load(ThreadContextProvider.class, classLoader)) {
+                providers.putIfAbsent(provider.getThreadContextType(), provider);
+            }
+        } catch (final RuntimeException re) {
+            Logger.getInstance(LogCategory.OPENEJB, ContextServiceImplFactory.class)
+                    .warning("Unable to load ThreadContextProvider via ServiceLoader", re);
+        }
+    }
+
+    private static class DeferredThreadContextProvider implements ThreadContextProvider, Serializable {
+        private final String threadContextType;
+
+        private DeferredThreadContextProvider(final String threadContextType) {
+            this.threadContextType = threadContextType;
+        }
+
+        @Override
+        public ThreadContextSnapshot currentContext(final Map<String, String> props) {
+            final ThreadContextProvider delegate = findRuntimeProvider(threadContextType);
+            return delegate != null ? delegate.currentContext(props) : ThreadContextProviderUtil.NOOP_SNAPSHOT;
+        }
+
+        @Override
+        public ThreadContextSnapshot clearedContext(final Map<String, String> props) {
+            final ThreadContextProvider delegate = findRuntimeProvider(threadContextType);
+            return delegate != null ? delegate.clearedContext(props) : ThreadContextProviderUtil.NOOP_SNAPSHOT;
+        }
+
+        @Override
+        public String getThreadContextType() {
+            return threadContextType;
+        }
+    }
+
+    private static class DeferredRemainingThreadContextProvider implements ThreadContextProvider, Serializable {
+        private static final String TYPE = "__openejb_deferred_remaining";
+
+        private final Set<String> excludedTypes;
+        private final boolean cleared;
+
+        private DeferredRemainingThreadContextProvider(final Set<String> excludedTypes, final boolean cleared) {
+            this.excludedTypes = Collections.unmodifiableSet(new LinkedHashSet<>(excludedTypes));
+            this.cleared = cleared;
+        }
+
+        @Override
+        public ThreadContextSnapshot currentContext(final Map<String, String> props) {
+            return buildSnapshot(props, cleared);
+        }
+
+        @Override
+        public ThreadContextSnapshot clearedContext(final Map<String, String> props) {
+            return buildSnapshot(props, true);
+        }
+
+        private ThreadContextSnapshot buildSnapshot(final Map<String, String> props, final boolean clear) {
+            final List<ThreadContextSnapshot> snapshots = new ArrayList<>();
+            for (final ThreadContextProvider provider : discoverRuntimeProviders().values()) {
+                if (excludedTypes.contains(provider.getThreadContextType())) {
+                    continue;
+                }
+                snapshots.add(clear ? provider.clearedContext(props) : provider.currentContext(props));
+            }
+
+            if (snapshots.isEmpty()) {
+                return ThreadContextProviderUtil.NOOP_SNAPSHOT;
+            }
+
+            return new CompositeThreadContextSnapshot(snapshots);
+        }
+
+        @Override
+        public String getThreadContextType() {
+            return TYPE;
+        }
+    }
+
+    private static class CompositeThreadContextSnapshot implements ThreadContextSnapshot, Serializable {
+        private final List<ThreadContextSnapshot> snapshots;
+
+        private CompositeThreadContextSnapshot(final List<ThreadContextSnapshot> snapshots) {
+            this.snapshots = snapshots;
+        }
+
+        @Override
+        public ThreadContextRestorer begin() {
+            if (snapshots.isEmpty()) {
+                return ThreadContextProviderUtil.NOOP_RESTORER;
+            }
+
+            final List<ThreadContextRestorer> restorers = new ArrayList<>(snapshots.size());
+            for (final ThreadContextSnapshot snapshot : snapshots) {
+                restorers.add(0, snapshot.begin());
+            }
+
+            return new CompositeThreadContextRestorer(restorers);
+        }
+    }
+
+    private static class CompositeThreadContextRestorer implements ThreadContextRestorer, Serializable {
+        private final List<ThreadContextRestorer> restorers;
+
+        private CompositeThreadContextRestorer(final List<ThreadContextRestorer> restorers) {
+            this.restorers = restorers;
+        }
+
+        @Override
+        public void endContext() throws IllegalStateException {
+            for (final ThreadContextRestorer restorer : restorers) {
+                restorer.endContext();
             }
         }
     }

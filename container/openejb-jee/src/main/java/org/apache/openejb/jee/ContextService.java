@@ -68,6 +68,7 @@ import org.apache.openejb.jee.jba.JndiName;
     "cleared",
     "propagated",
     "unchanged",
+    "qualifier",
     "property"
 })
 public class ContextService implements Keyable<String>{
@@ -82,6 +83,8 @@ public class ContextService implements Keyable<String>{
     protected List<String> propagated;
     @XmlElement
     protected List<String> unchanged;
+    @XmlElement(name = "qualifier")
+    protected List<String> qualifier;
     @XmlElement
     protected List<Property> property;
     @XmlAttribute(name = "id")
@@ -225,6 +228,13 @@ public class ContextService implements Keyable<String>{
         return this.unchanged;
     }
 
+    public List<String> getQualifier() {
+        if (qualifier == null) {
+            qualifier = new ArrayList<>();
+        }
+        return this.qualifier;
+    }
+
     /**
      * Gets the value of the property property.
      * 
@@ -283,4 +293,3 @@ public class ContextService implements Keyable<String>{
         return this.getName().getvalue();
     }
 }
-

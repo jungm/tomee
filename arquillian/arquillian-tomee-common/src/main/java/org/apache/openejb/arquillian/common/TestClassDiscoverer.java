@@ -153,6 +153,10 @@ public class TestClassDiscoverer implements AdditionalBeanDiscoverer {
         }
 
         for (final Class<?> test : testClasses) {
+            if (hasClassLevelAnnotation(test, "org.jboss.arquillian.container.test.api.RunAsClient")) {
+                continue;
+            }
+
             final EjbJar ejbJar = new EjbJar();
             final OpenejbJar openejbJar = new OpenejbJar();
             final String name = test.getName();
@@ -175,6 +179,15 @@ public class TestClassDiscoverer implements AdditionalBeanDiscoverer {
         }
 
         return module;
+    }
+
+    private static boolean hasClassLevelAnnotation(final Class<?> type, final String annotationClassName) {
+        for (final Annotation annotation : type.getAnnotations()) {
+            if (annotation.annotationType().getName().equals(annotationClassName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Set<Class<? extends Annotation>> findClassMarkers(final ClassLoader contextClassLoader) {

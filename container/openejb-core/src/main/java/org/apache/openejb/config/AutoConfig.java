@@ -946,6 +946,7 @@ public class AutoConfig implements DynamicDeployer, JndiConstants {
         final Map<ResourceInfo, Resource> resourcesMap = new HashMap<>(resources.size());
         for (final Resource resource : resources) {
             final String originalId = PropertyPlaceHolderHelper.value(resource.getId());
+            final String originModuleName = moduleOriginName(originalId, resource.getJndi());
             final String modulePrefix = module.getModuleId() + "/";
 
             if ("/".equals(modulePrefix) || originalId.startsWith("global") || originalId.startsWith("/global")) {
@@ -995,6 +996,7 @@ public class AutoConfig implements DynamicDeployer, JndiConstants {
 
             final ResourceInfo resourceInfo = configFactory.configureService(resource, ResourceInfo.class);
             resourceInfo.originAppName = module.getModuleId();
+            resourceInfo.originModuleName = originModuleName;
             final ResourceRef resourceRef = new ResourceRef();
             resourceRef.setResType(chooseType(module.getClassLoader(), resourceInfo, resource.getType()));
 
@@ -1038,6 +1040,20 @@ public class AutoConfig implements DynamicDeployer, JndiConstants {
 
         resourceInfos.clear();
         // resources.clear(); // don't clear it since we want to keep this to be able to undeploy resources with the app
+    }
+
+    private static String moduleOriginName(final String originalId, final String jndiName) {
+        if (originalId == null || jndiName == null || !jndiName.startsWith("module/")) {
+            return null;
+        }
+
+        final String suffix = "/" + jndiName;
+        if (!originalId.endsWith(suffix)) {
+            return null;
+        }
+
+        final String moduleName = originalId.substring(0, originalId.length() - suffix.length());
+        return moduleName.isEmpty() ? null : moduleName;
     }
 
     private static void addResource(final JndiConsumer consumer, final ResourceRef resourceRef) {

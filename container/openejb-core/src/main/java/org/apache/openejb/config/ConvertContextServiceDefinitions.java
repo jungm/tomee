@@ -20,12 +20,10 @@ package org.apache.openejb.config;
 import org.apache.openejb.OpenEJBException;
 import org.apache.openejb.config.sys.Resource;
 import org.apache.openejb.jee.ContextService;
-import org.apache.openejb.jee.JndiConsumer;
-import org.apache.openejb.jee.KeyedCollection;
 import org.apache.openejb.util.Join;
 import org.apache.openejb.util.PropertyPlaceHolderHelper;
 
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 
@@ -36,48 +34,46 @@ public class ConvertContextServiceDefinitions extends BaseConvertDefinitions {
 
     @Override
     public AppModule deploy(final AppModule appModule) throws OpenEJBException {
+        final Map<String, ScopedDefinition<ContextService>> contextServices = new LinkedHashMap<>();
+        final Map<String, ScopedDefinition<ContextService>> contextServicesFromCompManagedBeans = new LinkedHashMap<>();
 
-        final List<JndiConsumer> jndiConsumers = collectConsumers(appModule);
-
-        final KeyedCollection<String, ContextService> contextServices = new KeyedCollection<>();
-        final KeyedCollection<String, ContextService> contextServicesFromCompManagedBeans = new KeyedCollection<>();
-
-        for (final JndiConsumer consumer : jndiConsumers) {
+        for (final ScopedJndiConsumer scopedConsumer : collectScopedConsumers(appModule)) {
+            final String moduleId = scopedConsumer.moduleId();
+            final org.apache.openejb.jee.JndiConsumer consumer = scopedConsumer.consumer();
             if (consumer == null) {
                 continue;
             }
+            final Map<String, ScopedDefinition<ContextService>> target = consumer instanceof CompManagedBean
+                    ? contextServicesFromCompManagedBeans
+                    : contextServices;
 
-            if (consumer instanceof CompManagedBean) {
+            for (final ContextService contextService : consumer.getContextServiceMap().values()) {
                 /*
-                 * TOMEE-2053: It may contain invalid context service definitions
-                 * because it is never updated with content from the ejb-jar.xml
-                 * Wait until all other consumers have been processed, to safely
-                 * decide which context services to transfer;
+                 * TOMEE-2053: CompManagedBean may contain invalid context service definitions
+                 * because it is never updated with content from ejb-jar.xml.
                  */
-
-                contextServicesFromCompManagedBeans.addAll(consumer.getContextServiceMap().values());
-                continue;
-            }
-            contextServices.addAll(consumer.getContextServiceMap().values());
-        }
-
-        final Map<String, ContextService> dataSourcesMap = contextServices.toMap();
-        for(ContextService contextService : contextServicesFromCompManagedBeans){
-            //Interested only in ContextServices that come from non-JndiConsumers
-            if(!dataSourcesMap.containsKey(contextService.getName().getvalue())){
-                contextServices.add(contextService);
+                target.put(scopedDefinitionKey(moduleId, contextService.getName().getvalue()),
+                        new ScopedDefinition<>(moduleId, contextService));
             }
         }
 
-        for (final ContextService dataSource : contextServices) {
-            appModule.getResources().add(toResource(dataSource));
+        for (final Map.Entry<String, ScopedDefinition<ContextService>> entry : contextServicesFromCompManagedBeans.entrySet()) {
+            // Interested only in ContextServices that come from non-JndiConsumers
+            if (!contextServices.containsKey(entry.getKey())) {
+                contextServices.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        for (final ScopedDefinition<ContextService> definition : contextServices.values()) {
+            appModule.getResources().add(toResource(definition.definition(), definition.moduleId()));
         }
         return appModule;
     }
 
 
-    private Resource toResource(final ContextService contextService) {
-        final String name = cleanUpName(contextService.getName().getvalue());
+    private Resource toResource(final ContextService contextService, final String moduleId) {
+        validateQualifiedResourceName("ContextService", contextService.getName().getvalue(), contextService.getQualifier());
+        final String name = scopedResourceName(moduleId, contextService.getName().getvalue());
 
         final Resource def = new Resource(name, jakarta.enterprise.concurrent.ContextService.class.getName());
 
@@ -88,6 +84,7 @@ public class ConvertContextServiceDefinitions extends BaseConvertDefinitions {
         put(p, "Propagated", Join.join(",", contextService.getPropagated()));
         put(p, "Cleared", Join.join(",", contextService.getCleared()));
         put(p, "Unchanged", Join.join(",", contextService.getUnchanged()));
+        put(p, "Qualifiers", Join.join(",", contextService.getQualifier()));
 
         // to force it to be bound in JndiEncBuilder
         put(p, "JndiName", def.getJndi());
@@ -104,5 +101,23 @@ public class ConvertContextServiceDefinitions extends BaseConvertDefinitions {
         }
 
         properties.put(key, PropertyPlaceHolderHelper.value(String.valueOf(value)));
+    }
+
+    private static final class ScopedDefinition<T> {
+        private final String moduleId;
+        private final T definition;
+
+        private ScopedDefinition(final String moduleId, final T definition) {
+            this.moduleId = moduleId;
+            this.definition = definition;
+        }
+
+        private String moduleId() {
+            return moduleId;
+        }
+
+        private T definition() {
+            return definition;
+        }
     }
 }

@@ -29,7 +29,7 @@ xref:../../comparison.adoc[See main comparison page.]
 |https://jakarta.ee/specifications/activation/2.1/[Jakarta Activation^] 2.1||{y}|{y}|{y}|{y}
 |https://jakarta.ee/specifications/bean-validation/3.0/[Jakarta Bean Validation^] 3.0||{y}|{y}|{y}|{y}
 |https://jakarta.ee/specifications/cdi/4.0/[Jakarta Contexts and Dependency Injection^] (CDI) 4.0||{y}|{y}|{y}|{y}
-|https://jakarta.ee/specifications/concurrency/3.0/[Jakarta Concurrency^] 3.0||||{y}|{y}
+|https://jakarta.ee/specifications/concurrency/3.1/[Jakarta Concurrency^] 3.1||||{y}|{y}
 |https://jakarta.ee/specifications/dependency-injection/2.0/[Jakarta Dependency Injection^] (@Inject) 2.0||{y}|{y}|{y}|{y}
 |https://jakarta.ee/specifications/enterprise-beans/4.0/[Jakarta Enterprise Beans^] (EJB) 4.0||{y}|{y}|{y}|{y}
 |https://jakarta.ee/specifications/faces/4.0/[Jakarta Faces^] (JSF) 4.0||{y}|{y}|{y}|{y}

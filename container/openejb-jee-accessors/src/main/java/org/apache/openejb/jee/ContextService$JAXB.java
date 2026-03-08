@@ -88,6 +88,7 @@ public class ContextService$JAXB
         List<String> cleared = null;
         List<String> propagated = null;
         List<String> unchanged = null;
+        List<String> qualifier = null;
         List<Property> property = null;
 
         // Check xsi:type
@@ -183,6 +184,27 @@ public class ContextService$JAXB
                     }
                 }
                 unchanged.add(unchangedItem);
+            } else if (("qualifier" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
+                // ELEMENT: qualifier
+                String qualifierItemRaw = elementReader.getElementText();
+
+                String qualifierItem;
+                try {
+                    qualifierItem = Adapters.collapsedStringAdapterAdapter.unmarshal(qualifierItemRaw);
+                } catch (Exception e) {
+                    context.xmlAdapterError(elementReader, CollapsedStringAdapter.class, String.class, String.class, e);
+                    continue;
+                }
+
+                if (qualifier == null) {
+                    qualifier = contextService.qualifier;
+                    if (qualifier!= null) {
+                        qualifier.clear();
+                    } else {
+                        qualifier = new ArrayList<>();
+                    }
+                }
+                qualifier.add(qualifierItem);
             } else if (("property" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
                 // ELEMENT: property
                 Property propertyItem = readProperty(elementReader, context);
@@ -196,7 +218,7 @@ public class ContextService$JAXB
                 }
                 property.add(propertyItem);
             } else {
-                context.unexpectedElement(elementReader, new QName("http://java.sun.com/xml/ns/javaee", "description"), new QName("http://java.sun.com/xml/ns/javaee", "name"), new QName("http://java.sun.com/xml/ns/javaee", "cleared"), new QName("http://java.sun.com/xml/ns/javaee", "propagated"), new QName("http://java.sun.com/xml/ns/javaee", "unchanged"), new QName("http://java.sun.com/xml/ns/javaee", "property"));
+                context.unexpectedElement(elementReader, new QName("http://java.sun.com/xml/ns/javaee", "description"), new QName("http://java.sun.com/xml/ns/javaee", "name"), new QName("http://java.sun.com/xml/ns/javaee", "cleared"), new QName("http://java.sun.com/xml/ns/javaee", "propagated"), new QName("http://java.sun.com/xml/ns/javaee", "unchanged"), new QName("http://java.sun.com/xml/ns/javaee", "qualifier"), new QName("http://java.sun.com/xml/ns/javaee", "property"));
             }
         }
         if (cleared!= null) {
@@ -207,6 +229,9 @@ public class ContextService$JAXB
         }
         if (unchanged!= null) {
             contextService.unchanged = unchanged;
+        }
+        if (qualifier!= null) {
+            contextService.qualifier = qualifier;
         }
         if (property!= null) {
             contextService.property = property;
@@ -323,6 +348,24 @@ public class ContextService$JAXB
                 if (unchanged!= null) {
                     writer.writeStartElement(prefix, "unchanged", "http://java.sun.com/xml/ns/javaee");
                     writer.writeCharacters(unchanged);
+                    writer.writeEndElement();
+                }
+            }
+        }
+
+        // ELEMENT: qualifier
+        List<String> qualifierRaw = contextService.qualifier;
+        if (qualifierRaw!= null) {
+            for (String qualifierItem: qualifierRaw) {
+                String qualifier = null;
+                try {
+                    qualifier = Adapters.collapsedStringAdapterAdapter.marshal(qualifierItem);
+                } catch (Exception e) {
+                    context.xmlAdapterError(contextService, "qualifier", CollapsedStringAdapter.class, List.class, List.class, e);
+                }
+                if (qualifier!= null) {
+                    writer.writeStartElement(prefix, "qualifier", "http://java.sun.com/xml/ns/javaee");
+                    writer.writeCharacters(qualifier);
                     writer.writeEndElement();
                 }
             }

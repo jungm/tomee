@@ -22,6 +22,7 @@ import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlType;
 import org.apache.openejb.jee.jba.JndiName;
 
+import java.util.ArrayList;
 import java.util.List;
 
 
@@ -32,6 +33,8 @@ import java.util.List;
         "contextService",
         "hungTaskThreshold",
         "maxAsync",
+        "qualifiers",
+        "virtual",
         "properties"
 })
 public class ManagedScheduledExecutor implements Keyable<String> {
@@ -45,6 +48,10 @@ public class ManagedScheduledExecutor implements Keyable<String> {
     protected Long hungTaskThreshold;
     @XmlElement(name = "max-async")
     protected Integer maxAsync;
+    @XmlElement(name = "qualifier")
+    protected List<String> qualifiers;
+    @XmlElement(name = "virtual")
+    protected Boolean virtual;
     @XmlElement(name = "property")
     protected List<Property> properties;
 
@@ -94,6 +101,21 @@ public class ManagedScheduledExecutor implements Keyable<String> {
 
     public void setProperties(List<Property> properties) {
         this.properties = properties;
+    }
+
+    public List<String> getQualifiers() {
+        if (qualifiers == null) {
+            qualifiers = new ArrayList<>();
+        }
+        return qualifiers;
+    }
+
+    public Boolean isVirtual() {
+        return virtual;
+    }
+
+    public void setVirtual(final Boolean virtual) {
+        this.virtual = virtual;
     }
 
     @Override

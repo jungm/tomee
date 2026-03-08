@@ -18,59 +18,56 @@ package org.apache.openejb.config;
 
 import org.apache.openejb.OpenEJBException;
 import org.apache.openejb.config.sys.Resource;
-import org.apache.openejb.jee.JndiConsumer;
-import org.apache.openejb.jee.KeyedCollection;
 import org.apache.openejb.jee.ManagedExecutor;
+import org.apache.openejb.util.Join;
 import org.apache.openejb.util.PropertyPlaceHolderHelper;
 
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 
 public class ConvertManagedExecutorServiceDefinitions extends BaseConvertDefinitions {
     @Override
     public AppModule deploy(AppModule appModule) throws OpenEJBException {
-        final List<JndiConsumer> jndiConsumers = collectConsumers(appModule);
+        final Map<String, ScopedDefinition<ManagedExecutor>> managedExecutors = new LinkedHashMap<>();
+        final Map<String, ScopedDefinition<ManagedExecutor>> managedExecutorsFromCompManagedBeans = new LinkedHashMap<>();
 
-        final KeyedCollection<String, ManagedExecutor> managedExecutors = new KeyedCollection<>();
-        final KeyedCollection<String, ManagedExecutor> managedExecutorsFromCompManagedBeans = new KeyedCollection<>();
-
-        for (final JndiConsumer consumer : jndiConsumers) {
+        for (final ScopedJndiConsumer scopedConsumer : collectScopedConsumers(appModule)) {
+            final String moduleId = scopedConsumer.moduleId();
+            final org.apache.openejb.jee.JndiConsumer consumer = scopedConsumer.consumer();
             if (consumer == null) {
                 continue;
             }
-
-            if (consumer instanceof CompManagedBean) {
+            final Map<String, ScopedDefinition<ManagedExecutor>> target = consumer instanceof CompManagedBean
+                    ? managedExecutorsFromCompManagedBeans
+                    : managedExecutors;
+            for (final ManagedExecutor managedExecutor : consumer.getManagedExecutorMap().values()) {
                 /*
-                 * TOMEE-2053: It may contain invalid context service definitions
-                 * because it is never updated with content from the ejb-jar.xml
-                 * Wait until all other consumers have been processed, to safely
-                 * decide which context services to transfer;
+                 * TOMEE-2053: CompManagedBean may contain invalid definitions
+                 * because it is never updated with content from ejb-jar.xml.
                  */
-
-                managedExecutorsFromCompManagedBeans.addAll(consumer.getManagedExecutorMap().values());
-                continue;
+                target.put(scopedDefinitionKey(moduleId, managedExecutor.getName().getvalue()),
+                        new ScopedDefinition<>(moduleId, managedExecutor));
             }
-            managedExecutors.addAll(consumer.getManagedExecutorMap().values());
         }
 
-        final Map<String, ManagedExecutor> managedExecutorsMap = managedExecutors.toMap();
-        for (ManagedExecutor managedExecutor : managedExecutorsFromCompManagedBeans) {
+        for (final Map.Entry<String, ScopedDefinition<ManagedExecutor>> entry : managedExecutorsFromCompManagedBeans.entrySet()) {
             //Interested only in ManagedExecutorServices that come from non-JndiConsumers
-            if (!managedExecutorsMap.containsKey(managedExecutor.getName().getvalue())) {
-                managedExecutors.add(managedExecutor);
+            if (!managedExecutors.containsKey(entry.getKey())) {
+                managedExecutors.put(entry.getKey(), entry.getValue());
             }
         }
 
-        for (final ManagedExecutor managedExecutor : managedExecutors) {
-            appModule.getResources().add(toResource(managedExecutor));
+        for (final ScopedDefinition<ManagedExecutor> managedExecutor : managedExecutors.values()) {
+            appModule.getResources().add(toResource(managedExecutor.definition(), managedExecutor.moduleId()));
         }
 
         return appModule;
     }
 
-    private Resource toResource(final ManagedExecutor managedExecutor) {
-        final String name = cleanUpName(managedExecutor.getName().getvalue());
+    private Resource toResource(final ManagedExecutor managedExecutor, final String moduleId) {
+        validateQualifiedResourceName("ManagedExecutorService", managedExecutor.getName().getvalue(), managedExecutor.getQualifiers());
+        final String name = scopedResourceName(moduleId, managedExecutor.getName().getvalue());
 
         final Resource def = new Resource(name, jakarta.enterprise.concurrent.ManagedExecutorService.class.getName());
 
@@ -78,16 +75,13 @@ public class ConvertManagedExecutorServiceDefinitions extends BaseConvertDefinit
 
         final Properties p = def.getProperties();
 
-        String contextName = managedExecutor.getContextService().getvalue();
-        // Translate JNDI name to TomEE Resource ID, otherwise AutoConfig will fail to resolve it
-        // and try to fix it by rewriting this to an unwanted ContextService
-        if ("java:comp/DefaultContextService".equals(contextName)) {
-            contextName = "Default Context Service";
-        }
+        final String contextName = resolveContextReference(moduleId, managedExecutor.getContextService());
 
         put(p, "Context", contextName);
         put(p, "HungTaskThreshold", managedExecutor.getHungTaskThreshold());
         put(p, "Max", managedExecutor.getMaxAsync());
+        put(p, "Virtual", managedExecutor.isVirtual());
+        put(p, "Qualifiers", Join.join(",", managedExecutor.getQualifiers()));
 
         // to force it to be bound in JndiEncBuilder
         put(p, "JndiName", def.getJndi());
@@ -104,5 +98,23 @@ public class ConvertManagedExecutorServiceDefinitions extends BaseConvertDefinit
         }
 
         properties.put(key, PropertyPlaceHolderHelper.value(String.valueOf(value)));
+    }
+
+    private static final class ScopedDefinition<T> {
+        private final String moduleId;
+        private final T definition;
+
+        private ScopedDefinition(final String moduleId, final T definition) {
+            this.moduleId = moduleId;
+            this.definition = definition;
+        }
+
+        private String moduleId() {
+            return moduleId;
+        }
+
+        private T definition() {
+            return definition;
+        }
     }
 }

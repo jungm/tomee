@@ -806,6 +806,7 @@
     KeepAlive = 5 s
     Queue = 15
     ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+    Virtual = false
     Context = [automatic]
     Lazy = true
   </ServiceProvider>
@@ -816,6 +817,7 @@
                    class-name="org.apache.openejb.resource.thread.ManagedScheduledExecutorServiceImplFactory">
     Core = 5
     ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+    Virtual = false
     Context = [automatic]
     Lazy = true
     SkipImplicitAttributes = true
@@ -827,6 +829,7 @@
                    class-name="org.apache.openejb.resource.thread.ManagedThreadFactoryImplFactory">
     Prefix = openejb-managed-thread-
     Priority = 5
+    Virtual = false
     Context = [automatic]
     Lazy = true
     SkipImplicitAttributes = true

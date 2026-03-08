@@ -18,6 +18,7 @@
 package org.apache.openejb.cdi;
 
 import org.apache.openejb.core.ParentClassLoaderFinder;
+import org.apache.openejb.cdi.concurrency.ConcurrencyCDIExtension;
 import org.apache.openejb.loader.SystemInstance;
 import org.apache.openejb.resource.activemq.jms2.cdi.JMS2CDIExtension;
 import org.apache.openejb.util.LogCategory;
@@ -125,6 +126,7 @@ public class OptimizedLoaderService implements LoaderService {
         if (hasJms()) {
             list.add(new JMS2CDIExtension());
         }
+        list.add(new ConcurrencyCDIExtension());
 
         final Collection<Extension> extensionCopy = new ArrayList<>(list);
 

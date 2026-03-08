@@ -84,6 +84,7 @@ public class ManagedScheduledExecutor$JAXB
         ManagedScheduledExecutor managedScheduledExecutor = new ManagedScheduledExecutor();
         context.beforeUnmarshal(managedScheduledExecutor, LifecycleCallback.NONE);
 
+        List<String> qualifiers = null;
         List<Property> properties = null;
 
         // Check xsi:type
@@ -123,6 +124,22 @@ public class ManagedScheduledExecutor$JAXB
                 // ELEMENT: maxAsync
                 Integer maxAsync = Integer.valueOf(elementReader.getElementText());
                 managedScheduledExecutor.maxAsync = maxAsync;
+            } else if (("qualifier" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
+                // ELEMENT: qualifiers
+                String qualifiersItem = elementReader.getElementText();
+                if (qualifiers == null) {
+                    qualifiers = managedScheduledExecutor.qualifiers;
+                    if (qualifiers!= null) {
+                        qualifiers.clear();
+                    } else {
+                        qualifiers = new ArrayList<>();
+                    }
+                }
+                qualifiers.add(qualifiersItem);
+            } else if (("virtual" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
+                // ELEMENT: virtual
+                Boolean virtual = Boolean.valueOf(elementReader.getElementText());
+                managedScheduledExecutor.virtual = virtual;
             } else if (("property" == elementReader.getLocalName())&&("http://java.sun.com/xml/ns/javaee" == elementReader.getNamespaceURI())) {
                 // ELEMENT: properties
                 Property propertiesItem = readProperty(elementReader, context);
@@ -136,8 +153,11 @@ public class ManagedScheduledExecutor$JAXB
                 }
                 properties.add(propertiesItem);
             } else {
-                context.unexpectedElement(elementReader, new QName("http://java.sun.com/xml/ns/javaee", "description"), new QName("http://java.sun.com/xml/ns/javaee", "name"), new QName("http://java.sun.com/xml/ns/javaee", "context-service-ref"), new QName("http://java.sun.com/xml/ns/javaee", "hung-task-threshold"), new QName("http://java.sun.com/xml/ns/javaee", "max-async"), new QName("http://java.sun.com/xml/ns/javaee", "property"));
+                context.unexpectedElement(elementReader, new QName("http://java.sun.com/xml/ns/javaee", "description"), new QName("http://java.sun.com/xml/ns/javaee", "name"), new QName("http://java.sun.com/xml/ns/javaee", "context-service-ref"), new QName("http://java.sun.com/xml/ns/javaee", "hung-task-threshold"), new QName("http://java.sun.com/xml/ns/javaee", "max-async"), new QName("http://java.sun.com/xml/ns/javaee", "qualifier"), new QName("http://java.sun.com/xml/ns/javaee", "virtual"), new QName("http://java.sun.com/xml/ns/javaee", "property"));
             }
+        }
+        if (qualifiers!= null) {
+            managedScheduledExecutor.qualifiers = qualifiers;
         }
         if (properties!= null) {
             managedScheduledExecutor.properties = properties;
@@ -212,6 +232,26 @@ public class ManagedScheduledExecutor$JAXB
         if (maxAsync!= null) {
             writer.writeStartElement(prefix, "max-async", "http://java.sun.com/xml/ns/javaee");
             writer.writeCharacters(Integer.toString(maxAsync));
+            writer.writeEndElement();
+        }
+
+        // ELEMENT: qualifiers
+        List<String> qualifiers = managedScheduledExecutor.qualifiers;
+        if (qualifiers!= null) {
+            for (String qualifiersItem: qualifiers) {
+                if (qualifiersItem!= null) {
+                    writer.writeStartElement(prefix, "qualifier", "http://java.sun.com/xml/ns/javaee");
+                    writer.writeCharacters(qualifiersItem);
+                    writer.writeEndElement();
+                }
+            }
+        }
+
+        // ELEMENT: virtual
+        Boolean virtual = managedScheduledExecutor.virtual;
+        if (virtual!= null) {
+            writer.writeStartElement(prefix, "virtual", "http://java.sun.com/xml/ns/javaee");
+            writer.writeCharacters(Boolean.toString(virtual));
             writer.writeEndElement();
         }
 

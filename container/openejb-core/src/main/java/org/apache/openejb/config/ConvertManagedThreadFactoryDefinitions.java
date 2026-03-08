@@ -18,75 +18,68 @@ package org.apache.openejb.config;
 
 import org.apache.openejb.OpenEJBException;
 import org.apache.openejb.config.sys.Resource;
-import org.apache.openejb.jee.JndiConsumer;
-import org.apache.openejb.jee.KeyedCollection;
 import org.apache.openejb.jee.ManagedThreadFactory;
-import org.apache.openejb.jee.ManagedThreadFactory;
+import org.apache.openejb.util.Join;
 import org.apache.openejb.util.PropertyPlaceHolderHelper;
 
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 
 public class ConvertManagedThreadFactoryDefinitions extends BaseConvertDefinitions {
     @Override
     public AppModule deploy(AppModule appModule) throws OpenEJBException {
-        final List<JndiConsumer> jndiConsumers = collectConsumers(appModule);
+        final Map<String, ScopedDefinition<ManagedThreadFactory>> managedThreadFactories = new LinkedHashMap<>();
+        final Map<String, ScopedDefinition<ManagedThreadFactory>> managedThreadFactoriesFromCompManagedBeans = new LinkedHashMap<>();
 
-        final KeyedCollection<String, ManagedThreadFactory> managedThreadFactories = new KeyedCollection<>();
-        final KeyedCollection<String, ManagedThreadFactory> managedThreadFactoriesFromCompManagedBeans = new KeyedCollection<>();
-
-        for (final JndiConsumer consumer : jndiConsumers) {
+        for (final ScopedJndiConsumer scopedConsumer : collectScopedConsumers(appModule)) {
+            final String moduleId = scopedConsumer.moduleId();
+            final org.apache.openejb.jee.JndiConsumer consumer = scopedConsumer.consumer();
             if (consumer == null) {
                 continue;
             }
-
-            if (consumer instanceof CompManagedBean) {
+            final Map<String, ScopedDefinition<ManagedThreadFactory>> target = consumer instanceof CompManagedBean
+                    ? managedThreadFactoriesFromCompManagedBeans
+                    : managedThreadFactories;
+            for (final ManagedThreadFactory managedThreadFactory : consumer.getManagedThreadFactoryMap().values()) {
                 /*
-                 * TOMEE-2053: It may contain invalid context service definitions
-                 * because it is never updated with content from the ejb-jar.xml
-                 * Wait until all other consumers have been processed, to safely
-                 * decide which context services to transfer;
+                 * TOMEE-2053: CompManagedBean may contain invalid definitions
+                 * because it is never updated with content from ejb-jar.xml.
                  */
-
-                managedThreadFactoriesFromCompManagedBeans.addAll(consumer.getManagedThreadFactoryMap().values());
-                continue;
+                target.put(scopedDefinitionKey(moduleId, managedThreadFactory.getName().getvalue()),
+                        new ScopedDefinition<>(moduleId, managedThreadFactory));
             }
-            managedThreadFactories.addAll(consumer.getManagedThreadFactoryMap().values());
         }
 
-        final Map<String, ManagedThreadFactory> managedThreadFactoriesMap = managedThreadFactories.toMap();
-        for (ManagedThreadFactory managedThreadFactory : managedThreadFactoriesFromCompManagedBeans) {
+        for (final Map.Entry<String, ScopedDefinition<ManagedThreadFactory>> entry : managedThreadFactoriesFromCompManagedBeans.entrySet()) {
             //Interested only in ManagedThreadFactoryServices that come from non-JndiConsumers
-            if (!managedThreadFactoriesMap.containsKey(managedThreadFactory.getName().getvalue())) {
-                managedThreadFactories.add(managedThreadFactory);
+            if (!managedThreadFactories.containsKey(entry.getKey())) {
+                managedThreadFactories.put(entry.getKey(), entry.getValue());
             }
         }
 
-        for (final ManagedThreadFactory managedThreadFactory : managedThreadFactories) {
-            appModule.getResources().add(toResource(managedThreadFactory));
+        for (final ScopedDefinition<ManagedThreadFactory> managedThreadFactory : managedThreadFactories.values()) {
+            appModule.getResources().add(toResource(managedThreadFactory.definition(), managedThreadFactory.moduleId()));
         }
 
         return appModule;
     }
 
-    private Resource toResource(final ManagedThreadFactory managedThreadFactory) {
-        final String name = cleanUpName(managedThreadFactory.getName().getvalue());
+    private Resource toResource(final ManagedThreadFactory managedThreadFactory, final String moduleId) {
+        validateQualifiedResourceName("ManagedThreadFactory", managedThreadFactory.getName().getvalue(), managedThreadFactory.getQualifiers());
+        final String name = scopedResourceName(moduleId, managedThreadFactory.getName().getvalue());
 
         final Resource def = new Resource(name, jakarta.enterprise.concurrent.ManagedThreadFactory.class.getName());
 
         def.setJndi(managedThreadFactory.getName().getvalue().replaceFirst("java:", ""));
 
-        String contextName = managedThreadFactory.getContextService().getvalue();
-        // Translate JNDI name to TomEE Resource ID, otherwise AutoConfig will fail to resolve it
-        // and try to fix it by rewriting this to an unwanted ContextService
-        if ("java:comp/DefaultContextService".equals(contextName)) {
-            contextName = "Default Context Service";
-        }
+        final String contextName = resolveContextReference(moduleId, managedThreadFactory.getContextService());
 
         final Properties p = def.getProperties();
         put(p, "Context", contextName);
         put(p, "Priority", managedThreadFactory.getPriority());
+        put(p, "Virtual", managedThreadFactory.isVirtual());
+        put(p, "Qualifiers", Join.join(",", managedThreadFactory.getQualifiers()));
 
         // to force it to be bound in JndiEncBuilder
         put(p, "JndiName", def.getJndi());
@@ -103,5 +96,23 @@ public class ConvertManagedThreadFactoryDefinitions extends BaseConvertDefinitio
         }
 
         properties.put(key, PropertyPlaceHolderHelper.value(String.valueOf(value)));
+    }
+
+    private static final class ScopedDefinition<T> {
+        private final String moduleId;
+        private final T definition;
+
+        private ScopedDefinition(final String moduleId, final T definition) {
+            this.moduleId = moduleId;
+            this.definition = definition;
+        }
+
+        private String moduleId() {
+            return moduleId;
+        }
+
+        private T definition() {
+            return definition;
+        }
     }
 }

@@ -18,76 +18,70 @@ package org.apache.openejb.config;
 
 import org.apache.openejb.OpenEJBException;
 import org.apache.openejb.config.sys.Resource;
-import org.apache.openejb.jee.JndiConsumer;
-import org.apache.openejb.jee.KeyedCollection;
 import org.apache.openejb.jee.ManagedScheduledExecutor;
+import org.apache.openejb.util.Join;
 import org.apache.openejb.util.PropertyPlaceHolderHelper;
 
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 
 public class ConvertManagedScheduledExecutorServiceDefinitions extends BaseConvertDefinitions {
     @Override
     public AppModule deploy(AppModule appModule) throws OpenEJBException {
-        final List<JndiConsumer> jndiConsumers = collectConsumers(appModule);
+        final Map<String, ScopedDefinition<ManagedScheduledExecutor>> managedScheduledExecutors = new LinkedHashMap<>();
+        final Map<String, ScopedDefinition<ManagedScheduledExecutor>> managedScheduledExecutorsFromCompManagedBeans = new LinkedHashMap<>();
 
-        final KeyedCollection<String, ManagedScheduledExecutor> managedScheduledExecutors = new KeyedCollection<>();
-        final KeyedCollection<String, ManagedScheduledExecutor> managedScheduledExecutorsFromCompManagedBeans = new KeyedCollection<>();
-
-        for (final JndiConsumer consumer : jndiConsumers) {
+        for (final ScopedJndiConsumer scopedConsumer : collectScopedConsumers(appModule)) {
+            final String moduleId = scopedConsumer.moduleId();
+            final org.apache.openejb.jee.JndiConsumer consumer = scopedConsumer.consumer();
             if (consumer == null) {
                 continue;
             }
-
-            if (consumer instanceof CompManagedBean) {
+            final Map<String, ScopedDefinition<ManagedScheduledExecutor>> target = consumer instanceof CompManagedBean
+                    ? managedScheduledExecutorsFromCompManagedBeans
+                    : managedScheduledExecutors;
+            for (final ManagedScheduledExecutor managedScheduledExecutor : consumer.getManagedScheduledExecutorMap().values()) {
                 /*
-                 * TOMEE-2053: It may contain invalid context service definitions
-                 * because it is never updated with content from the ejb-jar.xml
-                 * Wait until all other consumers have been processed, to safely
-                 * decide which context services to transfer;
+                 * TOMEE-2053: CompManagedBean may contain invalid definitions
+                 * because it is never updated with content from ejb-jar.xml.
                  */
-
-                managedScheduledExecutorsFromCompManagedBeans.addAll(consumer.getManagedScheduledExecutorMap().values());
-                continue;
+                target.put(scopedDefinitionKey(moduleId, managedScheduledExecutor.getName().getvalue()),
+                        new ScopedDefinition<>(moduleId, managedScheduledExecutor));
             }
-            managedScheduledExecutors.addAll(consumer.getManagedScheduledExecutorMap().values());
         }
 
-        final Map<String, ManagedScheduledExecutor> managedScheduledExecutorsMap = managedScheduledExecutors.toMap();
-        for (ManagedScheduledExecutor managedScheduledExecutor : managedScheduledExecutorsFromCompManagedBeans) {
+        for (final Map.Entry<String, ScopedDefinition<ManagedScheduledExecutor>> entry : managedScheduledExecutorsFromCompManagedBeans.entrySet()) {
             //Interested only in ManagedExecutorServices that come from non-JndiConsumers
-            if (!managedScheduledExecutorsMap.containsKey(managedScheduledExecutor.getName().getvalue())) {
-                managedScheduledExecutors.add(managedScheduledExecutor);
+            if (!managedScheduledExecutors.containsKey(entry.getKey())) {
+                managedScheduledExecutors.put(entry.getKey(), entry.getValue());
             }
         }
 
-        for (final ManagedScheduledExecutor managedScheduledExecutor : managedScheduledExecutors) {
-            appModule.getResources().add(toResource(managedScheduledExecutor));
+        for (final ScopedDefinition<ManagedScheduledExecutor> managedScheduledExecutor : managedScheduledExecutors.values()) {
+            appModule.getResources().add(toResource(managedScheduledExecutor.definition(), managedScheduledExecutor.moduleId()));
         }
 
         return appModule;
     }
 
-    private Resource toResource(final ManagedScheduledExecutor managedScheduledExecutor) {
-        final String name = cleanUpName(managedScheduledExecutor.getName().getvalue());
+    private Resource toResource(final ManagedScheduledExecutor managedScheduledExecutor, final String moduleId) {
+        validateQualifiedResourceName("ManagedScheduledExecutorService", managedScheduledExecutor.getName().getvalue(), managedScheduledExecutor.getQualifiers());
+        final String name = scopedResourceName(moduleId, managedScheduledExecutor.getName().getvalue());
 
         final Resource def = new Resource(name, jakarta.enterprise.concurrent.ManagedScheduledExecutorService.class.getName());
 
         def.setJndi(managedScheduledExecutor.getName().getvalue().replaceFirst("java:", ""));
 
 
-        String contextName = managedScheduledExecutor.getContextService().getvalue();
-        // Translate JNDI name to TomEE Resource ID, otherwise AutoConfig will fail to resolve it
-        // and try to fix it by rewriting this to an unwanted ContextService
-        if ("java:comp/DefaultContextService".equals(contextName)) {
-            contextName = "Default Context Service";
-        }
+        final String contextName = resolveContextReference(moduleId, managedScheduledExecutor.getContextService());
 
         final Properties p = def.getProperties();
         put(p, "Context", contextName);
         put(p, "HungTaskThreshold", managedScheduledExecutor.getHungTaskThreshold());
         put(p, "Core", managedScheduledExecutor.getMaxAsync());
+        put(p, "Virtual", managedScheduledExecutor.isVirtual());
+        put(p, "Qualifiers", Join.join(",", managedScheduledExecutor.getQualifiers()));
 
         // to force it to be bound in JndiEncBuilder
         put(p, "JndiName", def.getJndi());
@@ -104,5 +98,23 @@ public class ConvertManagedScheduledExecutorServiceDefinitions extends BaseConve
         }
 
         properties.put(key, PropertyPlaceHolderHelper.value(String.valueOf(value)));
+    }
+
+    private static final class ScopedDefinition<T> {
+        private final String moduleId;
+        private final T definition;
+
+        private ScopedDefinition(final String moduleId, final T definition) {
+            this.moduleId = moduleId;
+            this.definition = definition;
+        }
+
+        private String moduleId() {
+            return moduleId;
+        }
+
+        private T definition() {
+            return definition;
+        }
     }
 }

@@ -534,7 +534,8 @@ public class JndiEncBuilder {
     // we don't want to bind globally a global resource multiple times in the Assembler
     // if the datasource if defined globally in the currently deployed app originAppname should not be null
     private boolean isNotGobalOrIsHoldByThisApp(final ResourceInfo info, final JndiScope scope) {
-        return !info.jndiName.startsWith("global/")
+        final String normalizedJndiName = normalizeJndiName(info.jndiName);
+        return normalizedJndiName == null || !normalizedJndiName.startsWith("global/")
             || info.originAppName != null && info.originAppName.equals(moduleId) && JndiScope.global.equals(scope);
     }
 
@@ -542,13 +543,21 @@ public class JndiEncBuilder {
         if (!isNotGobalOrIsHoldByThisApp(info, scope)) {
             return false;
         }
-        if (!info.jndiName.startsWith("module/")) {
+        final String normalizedJndiName = normalizeJndiName(info.jndiName);
+        if (normalizedJndiName == null || !normalizedJndiName.startsWith("module/")) {
             return true;
         }
         if (info.originModuleName == null || info.originModuleName.isEmpty()) {
             return true;
         }
         return info.originModuleName.equals(moduleId);
+    }
+
+    private String normalizeJndiName(final String jndiName) {
+        if (jndiName == null) {
+            return null;
+        }
+        return jndiName.startsWith("java:") ? jndiName.substring("java:".length()) : jndiName;
     }
 
     private void addSpecialCompBindings(final Map<String, Object> bindings) {

@@ -26,8 +26,10 @@ import jakarta.enterprise.inject.spi.Extension;
 import jakarta.enterprise.util.Nonbinding;
 import jakarta.inject.Qualifier;
 import org.apache.openejb.AppContext;
+import org.apache.openejb.BeanContext;
 import org.apache.openejb.assembler.classic.OpenEjbConfiguration;
 import org.apache.openejb.assembler.classic.ResourceInfo;
+import org.apache.openejb.core.WebContext;
 import org.apache.openejb.loader.SystemInstance;
 import org.apache.openejb.spi.ContainerSystem;
 import org.apache.webbeans.config.WebBeansContext;
@@ -80,9 +82,13 @@ public class ConcurrencyCDIExtension implements Extension {
 
         final List<ResourceInfo> resources = openEjbConfiguration.facilities.resources;
         final Set<String> currentAppIds = findCurrentAppIds();
+        final Set<String> currentModuleIds = findCurrentModuleIds(currentAppIds);
 
         for (final ResourceInfo resource : resources) {
             if (!isVisibleInCurrentApp(resource, currentAppIds)) {
+                continue;
+            }
+            if (!isVisibleInCurrentModule(resource, currentModuleIds)) {
                 continue;
             }
 
@@ -471,6 +477,49 @@ public class ConcurrencyCDIExtension implements Extension {
             return true;
         }
         return currentAppIds.contains(resource.originAppName);
+    }
+
+    private boolean isVisibleInCurrentModule(final ResourceInfo resource, final Set<String> currentModuleIds) {
+        final String normalizedJndiName = normalizeJndiName(resource.jndiName);
+        if (normalizedJndiName == null || !normalizedJndiName.startsWith("module/")) {
+            return true;
+        }
+        if (resource.originModuleName == null || resource.originModuleName.isEmpty()) {
+            return true;
+        }
+        if (currentModuleIds.isEmpty()) {
+            return true;
+        }
+        return currentModuleIds.contains(resource.originModuleName);
+    }
+
+    private Set<String> findCurrentModuleIds(final Set<String> currentAppIds) {
+        final ContainerSystem containerSystem = SystemInstance.get().getComponent(ContainerSystem.class);
+        if (containerSystem == null) {
+            return Set.of();
+        }
+
+        final Set<String> moduleIds = new LinkedHashSet<>();
+        final ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+
+        for (final AppContext appContext : containerSystem.getAppContexts()) {
+            if (!currentAppIds.isEmpty() && !currentAppIds.contains(appContext.getId())) {
+                continue;
+            }
+
+            for (final WebContext webContext : appContext.getWebContexts()) {
+                if (webContext.getClassLoader() == tccl && webContext.getId() != null) {
+                    moduleIds.add(webContext.getId());
+                }
+            }
+
+            for (final BeanContext beanContext : appContext.getBeanContexts()) {
+                if (beanContext.getClassLoader() == tccl) {
+                    moduleIds.add(beanContext.getModuleName());
+                }
+            }
+        }
+        return moduleIds;
     }
 
     private Set<String> findCurrentAppIds() {

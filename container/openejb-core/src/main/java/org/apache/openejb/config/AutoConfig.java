@@ -946,7 +946,8 @@ public class AutoConfig implements DynamicDeployer, JndiConstants {
         final Map<ResourceInfo, Resource> resourcesMap = new HashMap<>(resources.size());
         for (final Resource resource : resources) {
             final String originalId = PropertyPlaceHolderHelper.value(resource.getId());
-            final String originModuleName = moduleOriginName(originalId, resource.getJndi());
+            final String jndiName = PropertyPlaceHolderHelper.value(resource.getJndi());
+            final String originModuleName = moduleOriginName(originalId, jndiName);
             final String modulePrefix = module.getModuleId() + "/";
 
             if ("/".equals(modulePrefix) || originalId.startsWith("global") || originalId.startsWith("/global")) {
@@ -955,7 +956,7 @@ public class AutoConfig implements DynamicDeployer, JndiConstants {
                 resource.getProperties().setProperty(ORIGINAL_ID, originalId);
                 resource.setId(modulePrefix + replaceJavaAndSlash(originalId));
             }
-            resource.setJndi(PropertyPlaceHolderHelper.value(resource.getJndi()));
+            resource.setJndi(jndiName);
 
             final Thread thread = Thread.currentThread();
             final ClassLoader oldCl = thread.getContextClassLoader();
@@ -1043,17 +1044,25 @@ public class AutoConfig implements DynamicDeployer, JndiConstants {
     }
 
     private static String moduleOriginName(final String originalId, final String jndiName) {
-        if (originalId == null || jndiName == null || !jndiName.startsWith("module/")) {
+        final String normalizedJndiName = normalizeScopedJndiName(jndiName);
+        if (originalId == null || normalizedJndiName == null || !normalizedJndiName.startsWith("module/")) {
             return null;
         }
 
-        final String suffix = "/" + jndiName;
+        final String suffix = "/" + normalizedJndiName;
         if (!originalId.endsWith(suffix)) {
             return null;
         }
 
         final String moduleName = originalId.substring(0, originalId.length() - suffix.length());
         return moduleName.isEmpty() ? null : moduleName;
+    }
+
+    private static String normalizeScopedJndiName(final String jndiName) {
+        if (jndiName == null) {
+            return null;
+        }
+        return jndiName.startsWith("java:") ? jndiName.substring("java:".length()) : jndiName;
     }
 
     private static void addResource(final JndiConsumer consumer, final ResourceRef resourceRef) {

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+  -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <parent>
+    <artifactId>tck</artifactId>
+    <groupId>org.apache.tomee</groupId>
+    <version>11.0.0-SNAPSHOT</version>
+  </parent>
+
+  <modelVersion>4.0.0</modelVersion>
+  <artifactId>security-tck</artifactId>
+  <packaging>pom</packaging>
+  <name>TomEE :: TCK :: Security</name>
+
+  <properties>
+    <security.tck.url>https://download.eclipse.org/jakartaee/security/4.0/jakarta-security-tck-${security-tck.version}.zip</security.tck.url>
+    <security.tck.modules>!old-tck,!old-tck/build,!old-tck/run</security.tck.modules>
+    <security.tck.classifier>plus</security.tck.classifier>
+    <security.tck.groovy.version>5.0.4</security.tck.groovy.version>
+    <security.tck.tomee.httpPort>8080</security.tck.tomee.httpPort>
+    <security.tck.tomee.verbose>true</security.tck.tomee.verbose>
+    <security.tck.extraMavenArgs></security.tck.extraMavenArgs>
+    <security.tck.mavenCommand>mvn</security.tck.mavenCommand>
+  </properties>
+
+  <profiles>
+    <profile>
+      <id>tck-security</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.groovy</groupId>
+          <artifactId>groovy</artifactId>
+          <version>${security.tck.groovy.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.groovy</groupId>
+          <artifactId>groovy-ant</artifactId>
+          <version>${security.tck.groovy.version}</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.gmavenplus</groupId>
+            <artifactId>gmavenplus-plugin</artifactId>
+            <version>4.3.1</version>
+            <executions>
+              <execution>
+                <id>run-security-tck</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>execute</goal>
+                </goals>
+                <configuration>
+                  <scripts>
+                    <script>${project.basedir}/run-security-tck.groovy</script>
+                  </scripts>
+                  <properties>
+                    <securityTckVersion>${security-tck.version}</securityTckVersion>
+                    <securityTckUrl>${security.tck.url}</securityTckUrl>
+                    <securityTckWorkDir>${project.build.directory}</securityTckWorkDir>
+                    <securityTckModules>${security.tck.modules}</securityTckModules>
+                    <securityTckClassifier>${security.tck.classifier}</securityTckClassifier>
+                    <securityTckTomeeHttpPort>${security.tck.tomee.httpPort}</securityTckTomeeHttpPort>
+                    <securityTckTomeeVerbose>${security.tck.tomee.verbose}</securityTckTomeeVerbose>
+                    <securityTckExtraMavenArgs>${security.tck.extraMavenArgs}</securityTckExtraMavenArgs>
+                    <securityTckMavenCommand>${security.tck.mavenCommand}</securityTckMavenCommand>
+                    <tomeeVersion>${tomee.version}</tomeeVersion>
+                  </properties>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
+</project>

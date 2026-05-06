@@ -18,8 +18,11 @@ package org.apache.tomee.security;
 
 import org.apache.catalina.authenticator.jaspic.CallbackHandlerImpl;
 import org.apache.catalina.Container;
+import org.apache.catalina.Context;
 import org.apache.catalina.connector.Request;
 import org.apache.catalina.realm.GenericPrincipal;
+import org.apache.openejb.BeanContext;
+import org.apache.openejb.core.ThreadContext;
 import org.apache.openejb.core.security.JaccProvider;
 import org.apache.openejb.loader.SystemInstance;
 import org.apache.openejb.spi.SecurityService;
@@ -40,14 +43,18 @@ import jakarta.security.auth.message.config.ServerAuthContext;
 import jakarta.security.enterprise.AuthenticationStatus;
 import jakarta.security.enterprise.SecurityContext;
 import jakarta.security.enterprise.authentication.mechanism.http.AuthenticationParameters;
+import jakarta.security.jacc.EJBRoleRefPermission;
+import jakarta.security.jacc.Policy;
 import jakarta.security.jacc.PolicyContext;
 import jakarta.security.jacc.PolicyFactory;
 import jakarta.security.jacc.WebResourcePermission;
+import jakarta.security.jacc.WebRoleRefPermission;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.security.Principal;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -87,7 +94,111 @@ public class TomEESecurityContext implements SecurityContext {
 
     @Override
     public Set<String> getAllDeclaredCallerRoles() {
-        throw new UnsupportedOperationException(); // TODO
+        if (securityService == null) {
+            return Collections.emptySet();
+        }
+
+        final Request request = OpenEJBSecurityListener.requests.get();
+        final ThreadContext threadContext = ThreadContext.getThreadContext();
+        if (request == null && threadContext == null) {
+            return Collections.emptySet();
+        }
+
+        final PolicyFactory policyFactory = PolicyFactory.getPolicyFactory();
+        if (policyFactory == null) {
+            return Collections.emptySet();
+        }
+
+        final Policy policy;
+        try {
+            policy = policyFactory.getPolicy();
+        } catch (final RuntimeException ignored) {
+            return Collections.emptySet();
+        }
+        if (policy == null) {
+            return Collections.emptySet();
+        }
+
+        final Subject subject = securityService.getCurrentSubject();
+        final Set<String> roles = new LinkedHashSet<>();
+
+        // Web branch: pull declared <security-role>s from the current Context
+        // and evaluate a WebRoleRefPermission for each under the web app's
+        // JACC context-id.
+        if (request != null) {
+            final Context webContext = request.getContext();
+            if (webContext != null) {
+                final String[] declaredRoles = webContext.findSecurityRoles();
+                if (declaredRoles != null && declaredRoles.length > 0) {
+                    final String previousContextId = PolicyContext.getContextID();
+                    final String appContext = getAppContextId();
+                    boolean contextIdChanged = false;
+                    try {
+                        if (appContext != null) {
+                            JavaSecurityManagers.setContextID(appContext);
+                            contextIdChanged = !Objects.equals(previousContextId, appContext);
+                        }
+                        for (final String role : declaredRoles) {
+                            if (role == null) {
+                                continue;
+                            }
+                            try {
+                                if (policy.implies(new WebRoleRefPermission("", role), subject)) {
+                                    roles.add(role);
+                                }
+                            } catch (final RuntimeException ignored) {
+                                // Skip roles whose evaluation fails; keep checking the rest.
+                            }
+                        }
+                    } finally {
+                        if (contextIdChanged) {
+                            JavaSecurityManagers.setContextID(previousContextId);
+                        }
+                    }
+                }
+            }
+        }
+
+        // EJB branch: while executing inside an EJB invocation the current
+        // ThreadContext exposes the BeanContext, whose security-role-ref /
+        // @DeclareRoles names map to EJBRoleRefPermission checks evaluated
+        // under the EJB module's JACC context-id.
+        if (threadContext != null) {
+            final BeanContext beanContext = threadContext.getBeanContext();
+            if (beanContext != null) {
+                final Set<String> roleRefs = beanContext.getSecurityRoleReferences();
+                if (!roleRefs.isEmpty()) {
+                    final String ejbName = beanContext.getEjbName();
+                    final String moduleId = beanContext.getModuleID();
+                    final String previousContextId = PolicyContext.getContextID();
+                    boolean contextIdChanged = false;
+                    try {
+                        if (moduleId != null) {
+                            JavaSecurityManagers.setContextID(moduleId);
+                            contextIdChanged = !Objects.equals(previousContextId, moduleId);
+                        }
+                        for (final String role : roleRefs) {
+                            if (role == null) {
+                                continue;
+                            }
+                            try {
+                                if (policy.implies(new EJBRoleRefPermission(ejbName, role), subject)) {
+                                    roles.add(role);
+                                }
+                            } catch (final RuntimeException ignored) {
+                                // Skip roles whose evaluation fails; keep checking the rest.
+                            }
+                        }
+                    } finally {
+                        if (contextIdChanged) {
+                            JavaSecurityManagers.setContextID(previousContextId);
+                        }
+                    }
+                }
+            }
+        }
+
+        return roles;
     }
 
     @Override

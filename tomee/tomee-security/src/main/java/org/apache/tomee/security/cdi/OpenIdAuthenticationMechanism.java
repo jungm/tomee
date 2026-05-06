@@ -32,8 +32,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.ClientBuilder;
 import jakarta.ws.rs.client.Entity;
+import jakarta.ws.rs.client.Invocation;
 import jakarta.ws.rs.core.Form;
+import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.UriBuilder;
 
@@ -42,7 +45,7 @@ import org.apache.openejb.util.Logger;
 import org.apache.tomee.security.cdi.openid.TomEEOpenIdContext;
 import org.apache.tomee.security.cdi.openid.storage.OpenIdStorageHandler;
 import org.apache.tomee.security.http.SavedRequest;
-import org.apache.tomee.security.http.openid.OpenIdHttpClientSupport;
+import org.apache.tomee.security.http.openid.CompositeOpenIdProviderMetadata;
 import org.apache.tomee.security.http.openid.model.TokenResponse;
 import org.apache.tomee.security.http.openid.model.TomEEOpenIdCredential;
 
@@ -50,7 +53,9 @@ import javax.security.auth.callback.Callback;
 import javax.security.auth.callback.UnsupportedCallbackException;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.stream.Collectors;
 import java.util.function.Supplier;
 
@@ -82,6 +87,28 @@ public class OpenIdAuthenticationMechanism implements HttpAuthenticationMechanis
 
     private OpenIdAuthenticationMechanismDefinition getDefinition() {
         return resolvedDefinition != null ? resolvedDefinition.get() : openIdAuthenticationMechanismDefinition;
+    }
+
+    private volatile String cachedRedirectPath;
+    private volatile String cachedRedirectUriSource;
+
+    /**
+     * Returns the path component of the configured {@code redirectURI}, memoised so we don't
+     * re-parse on every request. The comparison in {@link #performAuthentication} is deliberately
+     * path-based instead of comparing against {@link HttpServletRequest#getRequestURL()} which is
+     * derived from the client-supplied {@code Host} header (CWE-350).
+     */
+    private String redirectPath() {
+        String configured = getDefinition().redirectURI();
+        String cachedSource = cachedRedirectUriSource;
+        if (configured != null && configured.equals(cachedSource)) {
+            return cachedRedirectPath;
+        }
+
+        String path = configured == null ? null : URI.create(configured).getPath();
+        cachedRedirectPath = path;
+        cachedRedirectUriSource = configured;
+        return path;
     }
 
     @Override
@@ -186,7 +213,7 @@ public class OpenIdAuthenticationMechanism implements HttpAuthenticationMechanis
 
     protected AuthenticationStatus refreshTokens(HttpServletRequest request, HttpServletResponse response, HttpMessageContext httpMessageContext) {
         final String tokenEndpoint = getDefinition().providerMetadata().tokenEndpoint();
-        try (Client client = OpenIdHttpClientSupport.newClient(tokenEndpoint)) {
+        try (Client client = ClientBuilder.newClient()) {
             RefreshToken refreshToken = openIdContext.getRefreshToken()
                     .orElse(null);
 
@@ -194,15 +221,22 @@ public class OpenIdAuthenticationMechanism implements HttpAuthenticationMechanis
                 throw new IllegalStateException("Cannot refresh tokens, no refresh_token received");
             }
 
+            final boolean useBasic = preferBasicAuth();
             Form form = new Form()
-                    .param(OpenIdConstant.CLIENT_ID, getDefinition().clientId())
-                    .param(OpenIdConstant.CLIENT_SECRET, getDefinition().clientSecret())
                     .param(OpenIdConstant.GRANT_TYPE, OpenIdConstant.REFRESH_TOKEN)
                     .param(OpenIdConstant.REFRESH_TOKEN, refreshToken.getToken());
+            if (!useBasic) {
+                form.param(OpenIdConstant.CLIENT_ID, getDefinition().clientId())
+                    .param(OpenIdConstant.CLIENT_SECRET, getDefinition().clientSecret());
+            }
 
-            TokenResponse tokenResponse = client.target(tokenEndpoint).request()
-                    .accept(MediaType.APPLICATION_JSON)
-                    .post(Entity.form(form), TokenResponse.class);
+            Invocation.Builder requestBuilder = client.target(tokenEndpoint).request()
+                    .accept(MediaType.APPLICATION_JSON);
+            if (useBasic) {
+                requestBuilder = requestBuilder.header(HttpHeaders.AUTHORIZATION, basicAuthHeader());
+            }
+
+            TokenResponse tokenResponse = requestBuilder.post(Entity.form(form), TokenResponse.class);
 
             return handleTokenResponse(tokenResponse, httpMessageContext);
 
@@ -234,10 +268,25 @@ public class OpenIdAuthenticationMechanism implements HttpAuthenticationMechanis
 
         if (state != null) {
             String originalRequest = storageHandler.get(request, response, OpenIdConstant.ORIGINAL_REQUEST);
-            boolean matchesOriginalRequest = originalRequest != null && originalRequest.startsWith(request.getRequestURL().toString());
+            // Compare by path only; the full URL from getRequestURL() is composed from the
+            // client-supplied Host header and therefore untrusted (CWE-350).
+            String requestPath = request.getRequestURI();
+            String originalRequestPath = null;
+            if (originalRequest != null) {
+                try {
+                    originalRequestPath = URI.create(originalRequest).getPath();
+                } catch (IllegalArgumentException e) {
+                    originalRequestPath = null;
+                }
+            }
+            boolean matchesOriginalRequest = originalRequestPath != null && originalRequestPath.equals(requestPath);
+            boolean matchesRedirectUri = requestPath != null && requestPath.equals(redirectPath());
 
             // callback from openid provider (3)
-            if (!request.getRequestURL().toString().equals(getDefinition().redirectURI()) && getDefinition().redirectToOriginalResource() && !matchesOriginalRequest) {
+            // Per Jakarta Security 4.0 §2.4.4.2, if the callback URL matches neither the configured
+            // redirectURI nor the stored original request URL, the request must be rejected regardless
+            // of the redirectToOriginalResource setting.
+            if (!matchesRedirectUri && !matchesOriginalRequest) {
                 return messageContext.notifyContainerAboutLogin(CredentialValidationResult.NOT_VALIDATED_RESULT);
             }
 
@@ -264,17 +313,24 @@ public class OpenIdAuthenticationMechanism implements HttpAuthenticationMechanis
             storageHandler.delete(request, response, OpenIdStorageHandler.STATE_KEY);
 
             final String tokenEndpoint = getDefinition().providerMetadata().tokenEndpoint();
-            try (Client client = OpenIdHttpClientSupport.newClient(tokenEndpoint)) {
+            try (Client client = ClientBuilder.newClient()) {
+                final boolean useBasic = preferBasicAuth();
                 Form form = new Form()
-                        .param(OpenIdConstant.CLIENT_ID, getDefinition().clientId())
-                        .param(OpenIdConstant.CLIENT_SECRET, getDefinition().clientSecret())
                         .param(OpenIdConstant.GRANT_TYPE, "authorization_code")
                         .param(OpenIdConstant.REDIRECT_URI, getDefinition().redirectURI())
                         .param(OpenIdConstant.CODE, request.getParameter(OpenIdConstant.CODE));
+                if (!useBasic) {
+                    form.param(OpenIdConstant.CLIENT_ID, getDefinition().clientId())
+                        .param(OpenIdConstant.CLIENT_SECRET, getDefinition().clientSecret());
+                }
 
-                TokenResponse tokenResponse = client.target(tokenEndpoint).request()
-                        .accept(MediaType.APPLICATION_JSON)
-                        .post(Entity.form(form), TokenResponse.class);
+                Invocation.Builder requestBuilder = client.target(tokenEndpoint).request()
+                        .accept(MediaType.APPLICATION_JSON);
+                if (useBasic) {
+                    requestBuilder = requestBuilder.header(HttpHeaders.AUTHORIZATION, basicAuthHeader());
+                }
+
+                TokenResponse tokenResponse = requestBuilder.post(Entity.form(form), TokenResponse.class);
 
                 AuthenticationStatus result = handleTokenResponse(tokenResponse, messageContext);
 
@@ -375,5 +431,53 @@ public class OpenIdAuthenticationMechanism implements HttpAuthenticationMechanis
         }
 
         return url + "?" + query;
+    }
+
+    /**
+     * Whether to send client credentials as HTTP Basic {@code Authorization} header
+     * ({@code client_secret_basic}) instead of form parameters ({@code client_secret_post})
+     * when talking to the token endpoint.
+     *
+     * <p>Per OIDC Core 1.0 §9 both methods are legal and {@code client_secret_basic} is the
+     * default OP-mandated behaviour. The spec-level {@link jakarta.security.enterprise.authentication.mechanism.http.openid.OpenIdProviderMetadata
+     * OpenIdProviderMetadata} annotation does not expose {@code token_endpoint_auth_methods_supported},
+     * but when TomEE discovers the OP via {@code providerURI} the raw JSON document is available
+     * on {@link CompositeOpenIdProviderMetadata}. When that list is present we walk it in the
+     * order the OP advertised and pick the first method we know how to speak ({@code client_secret_basic}
+     * or {@code client_secret_post}); other listed methods (e.g. {@code client_secret_jwt},
+     * {@code private_key_jwt}, {@code tls_client_auth}) are skipped because this RP does not
+     * implement them. With no list (annotation-only config or empty discovery field) we fall
+     * back to Basic, the OIDC default.</p>
+     */
+    protected boolean preferBasicAuth() {
+        final Object providerMetadata = getDefinition().providerMetadata();
+        if (!(providerMetadata instanceof CompositeOpenIdProviderMetadata)) {
+            // No discovery document to consult: default to Basic (OIDC default).
+            return true;
+        }
+
+        final String[] methods = ((CompositeOpenIdProviderMetadata) providerMetadata).tokenEndpointAuthMethodsSupported();
+        if (methods == null || methods.length == 0) {
+            return true;
+        }
+
+        for (final String method : methods) {
+            if ("client_secret_basic".equalsIgnoreCase(method)) {
+                return true;
+            }
+            if ("client_secret_post".equalsIgnoreCase(method)) {
+                return false;
+            }
+        }
+
+        // List exists but advertises no method we implement; OIDC default is Basic.
+        return true;
+    }
+
+    protected String basicAuthHeader() {
+        final String clientId = getDefinition().clientId();
+        final String clientSecret = getDefinition().clientSecret();
+        final String raw = clientId + ':' + clientSecret;
+        return "Basic " + Base64.getEncoder().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
     }
 }

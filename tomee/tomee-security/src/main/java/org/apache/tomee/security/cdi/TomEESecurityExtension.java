@@ -33,6 +33,7 @@ import org.apache.tomee.security.http.openid.OpenIdAuthenticationMechanismDefini
 import org.apache.tomee.security.identitystore.TomEEDatabaseIdentityStore;
 import org.apache.tomee.security.identitystore.TomEEDefaultIdentityStore;
 import org.apache.tomee.security.identitystore.TomEEIdentityStoreHandler;
+import org.apache.tomee.security.identitystore.TomEEInMemoryIdentityStore;
 import org.apache.tomee.security.identitystore.TomEELDAPIdentityStore;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -41,11 +42,13 @@ import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.spi.AfterBeanDiscovery;
+import jakarta.enterprise.inject.spi.AfterDeploymentValidation;
 import jakarta.enterprise.inject.spi.Annotated;
 import jakarta.enterprise.inject.spi.AnnotatedType;
 import jakarta.enterprise.inject.spi.BeanAttributes;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.enterprise.inject.spi.BeforeBeanDiscovery;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.inject.spi.Extension;
 import jakarta.enterprise.inject.spi.ProcessBean;
 import jakarta.enterprise.util.TypeLiteral;
@@ -56,23 +59,36 @@ import jakarta.security.enterprise.authentication.mechanism.http.HttpAuthenticat
 import jakarta.security.enterprise.authentication.mechanism.http.LoginToContinue;
 import jakarta.security.enterprise.identitystore.DatabaseIdentityStoreDefinition;
 import jakarta.security.enterprise.identitystore.IdentityStore;
+import jakarta.security.enterprise.identitystore.InMemoryIdentityStoreDefinition;
 import jakarta.security.enterprise.identitystore.LdapIdentityStoreDefinition;
 
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public class TomEESecurityExtension implements Extension {
-    private final List<BasicAuthenticationMechanismDefinition> basicMechanismDefinitions = new ArrayList<>();
-    private final List<FormAuthenticationMechanismDefinition> formMechanismDefinitions = new ArrayList<>();
-    private final List<CustomFormAuthenticationMechanismDefinition> customMechanismDefinitions = new ArrayList<>();
-    private final List<OpenIdAuthenticationMechanismDefinition> oidcMechanismDefinitions = new ArrayList<>();
+    // LinkedHashSet: ProcessBean fires for each bean *and* any derived observer/interceptor beans on the
+    // same class, so List.addAll would otherwise duplicate identical annotation instances and cause
+    // AmbiguousResolutionException when multiple beans are registered with the same qualifier set.
+    private final Set<BasicAuthenticationMechanismDefinition> basicMechanismDefinitions = new LinkedHashSet<>();
+    private final Set<FormAuthenticationMechanismDefinition> formMechanismDefinitions = new LinkedHashSet<>();
+    private final Set<CustomFormAuthenticationMechanismDefinition> customMechanismDefinitions = new LinkedHashSet<>();
+    private final Set<OpenIdAuthenticationMechanismDefinition> oidcMechanismDefinitions = new LinkedHashSet<>();
 
     private final AtomicReference<Annotated> tomcatUserStore = new AtomicReference<>();
     private final AtomicReference<Annotated> databaseStore = new AtomicReference<>();
     private final AtomicReference<Annotated> ldapStore = new AtomicReference<>();
+    private final AtomicReference<Annotated> inMemoryStore = new AtomicReference<>();
 
     private boolean applicationAuthenticationMechanisms = false;
 
@@ -115,6 +131,10 @@ public class TomEESecurityExtension implements Extension {
             ldapStore.set(annotatedType);
         }
 
+        if (inMemoryStore.get() == null && annotatedType.isAnnotationPresent(InMemoryIdentityStoreDefinition.class)) {
+            inMemoryStore.set(annotatedType);
+        }
+
         basicMechanismDefinitions.addAll(annotatedType.getAnnotations(BasicAuthenticationMechanismDefinition.class));
         formMechanismDefinitions.addAll(annotatedType.getAnnotations(FormAuthenticationMechanismDefinition.class));
         customMechanismDefinitions.addAll(annotatedType.getAnnotations(CustomFormAuthenticationMechanismDefinition.class));
@@ -128,6 +148,16 @@ public class TomEESecurityExtension implements Extension {
     void registerAuthenticationMechanism(
         @Observes final AfterBeanDiscovery afterBeanDiscovery,
         final BeanManager beanManager) {
+
+        // Snapshot definition sets as ordered lists so the registration loops can use index-based IDs.
+        final List<BasicAuthenticationMechanismDefinition> basicMechanismDefinitions =
+                new ArrayList<>(this.basicMechanismDefinitions);
+        final List<FormAuthenticationMechanismDefinition> formMechanismDefinitions =
+                new ArrayList<>(this.formMechanismDefinitions);
+        final List<CustomFormAuthenticationMechanismDefinition> customMechanismDefinitions =
+                new ArrayList<>(this.customMechanismDefinitions);
+        final List<OpenIdAuthenticationMechanismDefinition> oidcMechanismDefinitions =
+                new ArrayList<>(this.oidcMechanismDefinitions);
 
         if (tomcatUserStore.get() != null) {
             afterBeanDiscovery
@@ -212,6 +242,35 @@ public class TomEESecurityExtension implements Extension {
                     final BeanAttributes<TomEELDAPIdentityStore> beanAttributes =
                         beanManager.createBeanAttributes(annotatedType);
                     return beanManager.createBean(beanAttributes, TomEELDAPIdentityStore.class,
+                                                  beanManager.getInjectionTargetFactory(annotatedType))
+                                      .create(creationalContext);
+                });
+        }
+
+        if (inMemoryStore.get() != null) {
+            afterBeanDiscovery
+                .addBean()
+                .id(TomEEInMemoryIdentityStore.class.getName() + "#" + InMemoryIdentityStoreDefinition.class.getName())
+                .beanClass(Supplier.class)
+                .addType(Object.class)
+                .addType(new TypeLiteral<Supplier<InMemoryIdentityStoreDefinition>>() {})
+                .qualifiers(Default.Literal.INSTANCE, Any.Literal.INSTANCE)
+                .scope(ApplicationScoped.class)
+                .createWith(creationalContext -> createInMemoryIdentityStoreDefinitionSupplier(beanManager));
+
+            afterBeanDiscovery
+                .addBean()
+                .id(TomEEInMemoryIdentityStore.class.getName())
+                .beanClass(TomEEInMemoryIdentityStore.class)
+                .types(Object.class, IdentityStore.class, TomEEInMemoryIdentityStore.class)
+                .qualifiers(Default.Literal.INSTANCE, Any.Literal.INSTANCE)
+                .scope(ApplicationScoped.class)
+                .createWith((CreationalContext<TomEEInMemoryIdentityStore> creationalContext) -> {
+                    final AnnotatedType<TomEEInMemoryIdentityStore> annotatedType =
+                        beanManager.createAnnotatedType(TomEEInMemoryIdentityStore.class);
+                    final BeanAttributes<TomEEInMemoryIdentityStore> beanAttributes =
+                        beanManager.createBeanAttributes(annotatedType);
+                    return beanManager.createBean(beanAttributes, TomEEInMemoryIdentityStore.class,
                                                   beanManager.getInjectionTargetFactory(annotatedType))
                                       .create(creationalContext);
                 });
@@ -404,6 +463,74 @@ public class TomEESecurityExtension implements Extension {
                 applicationAuthenticationMechanisms;
     }
 
+    // Fail deployment early when two *AuthenticationMechanismDefinition annotations would register
+    // beans with the same qualifier set but different content (e.g. two @BasicAuthenticationMechanismDefinition
+    // with identical default qualifiers but different realmName). Without this the clash only surfaces
+    // at first injection as an AmbiguousResolutionException, which is hard to diagnose.
+    void validateMechanismDefinitionUniqueness(@Observes final AfterDeploymentValidation afterDeploymentValidation) {
+        final List<String> problems = new ArrayList<>();
+
+        problems.addAll(validateQualifierUniqueness(basicMechanismDefinitions,
+                BasicAuthenticationMechanismDefinition.class,
+                BasicAuthenticationMechanismDefinition::qualifiers));
+        problems.addAll(validateQualifierUniqueness(formMechanismDefinitions,
+                FormAuthenticationMechanismDefinition.class,
+                FormAuthenticationMechanismDefinition::qualifiers));
+        problems.addAll(validateQualifierUniqueness(customMechanismDefinitions,
+                CustomFormAuthenticationMechanismDefinition.class,
+                CustomFormAuthenticationMechanismDefinition::qualifiers));
+        problems.addAll(validateQualifierUniqueness(oidcMechanismDefinitions,
+                OpenIdAuthenticationMechanismDefinition.class,
+                OpenIdAuthenticationMechanismDefinition::qualifiers));
+
+        if (!problems.isEmpty()) {
+            final String message = "Ambiguous authentication mechanism definitions detected:\n    "
+                    + String.join("\n    ", problems);
+            afterDeploymentValidation.addDeploymentProblem(new DeploymentException(message));
+        }
+    }
+
+    // Package-private for focused unit tests. Groups the annotations by the effective qualifier set
+    // (order-insensitive, duplicates collapsed) and returns a problem message for each set that has
+    // more than one distinct definition. Returns an empty list when the definitions are unambiguous.
+    static <T extends Annotation> List<String> validateQualifierUniqueness(
+            final Collection<T> definitions,
+            final Class<T> annotationType,
+            final Function<T, Class<?>[]> qualifiersAccessor) {
+
+        if (definitions == null || definitions.size() < 2) {
+            return List.of();
+        }
+
+        // LinkedHashMap preserves discovery order so error messages are deterministic.
+        final Map<Set<Class<?>>, List<T>> byQualifierSet = new LinkedHashMap<>();
+        for (final T definition : definitions) {
+            final Class<?>[] qualifiers = qualifiersAccessor.apply(definition);
+            final Set<Class<?>> key = new LinkedHashSet<>(Arrays.asList(qualifiers));
+            byQualifierSet.computeIfAbsent(key, k -> new ArrayList<>()).add(definition);
+        }
+
+        final List<String> problems = new ArrayList<>();
+        for (final Map.Entry<Set<Class<?>>, List<T>> entry : byQualifierSet.entrySet()) {
+            if (entry.getValue().size() <= 1) {
+                continue;
+            }
+            final String qualifierList = entry.getKey().isEmpty()
+                    ? "{}"
+                    : entry.getKey().stream()
+                            .map(Class::getSimpleName)
+                            .collect(Collectors.joining(", ", "{", "}"));
+            final String conflicting = entry.getValue().stream()
+                    .map(Object::toString)
+                    .collect(Collectors.joining("; "));
+            problems.add("@" + annotationType.getSimpleName()
+                    + " declared " + entry.getValue().size() + " times with qualifier set " + qualifierList
+                    + " but different content [" + conflicting + "]; "
+                    + "declare distinct qualifiers via qualifiers={...} or pick a single definition");
+        }
+        return problems;
+    }
+
     private Supplier<LoginToContinue> createFormLoginToContinueSupplier(final FormAuthenticationMechanismDefinition definition,
                                                                         final BeanManager beanManager) {
         return () -> {
@@ -447,6 +574,13 @@ public class TomEESecurityExtension implements Extension {
         return () -> {
             final LdapIdentityStoreDefinition annotation = ldapStore.get().getAnnotation(LdapIdentityStoreDefinition.class);
             return TomEEELInvocationHandler.of(LdapIdentityStoreDefinition.class, annotation, beanManager);
+        };
+    }
+
+    private Supplier<InMemoryIdentityStoreDefinition> createInMemoryIdentityStoreDefinitionSupplier(final BeanManager beanManager) {
+        return () -> {
+            final InMemoryIdentityStoreDefinition annotation = inMemoryStore.get().getAnnotation(InMemoryIdentityStoreDefinition.class);
+            return TomEEELInvocationHandler.of(InMemoryIdentityStoreDefinition.class, annotation, beanManager);
         };
     }
 

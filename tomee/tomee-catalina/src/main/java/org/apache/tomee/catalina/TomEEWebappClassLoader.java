@@ -165,9 +165,7 @@ public class TomEEWebappClassLoader extends ParallelWebappClassLoader {
         }
 
         // avoid to redefine classes from server in this classloader is it not already loaded
-        if (URLClassLoaderFirst.shouldDelegateToTheContainer(this, name)
-                || shouldForceLoadFromTheContainer(name)
-                || name.startsWith("jakarta.faces.")) { // dynamic validation handling overriding
+        if (URLClassLoaderFirst.shouldDelegateToTheContainer(this, name) || shouldForceLoadFromTheContainer(name)) { // dynamic validation handling overriding
             try {
                 return OpenEJB.class.getClassLoader().loadClass(name); // we could use containerClassLoader but this is server loader so cut it even more
             } catch (final ClassNotFoundException e) {
@@ -180,6 +178,10 @@ public class TomEEWebappClassLoader extends ParallelWebappClassLoader {
                 }
             }
         } else if (name.startsWith("org.apache.webbeans.jsf")) {
+            // jakarta.faces.* is handled above by shouldDelegateToTheContainer (see
+            // URLClassLoaderFirst.shouldSkipJsf) so the API is loaded from the container
+            // exactly once. The OWB JSF integration must still load locally to bind to
+            // the webapp's CDI beans, hence delegate=false here.
             synchronized (this) {
                 delegate = false;
                 try {

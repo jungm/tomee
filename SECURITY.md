@@ -88,6 +88,8 @@ TomEE owns only its **integration code** — the wiring that exposes these libra
 
 Reports of vulnerabilities in TomEE's integration code are accepted. Reports of vulnerabilities in the upstream library itself — independent of how TomEE wires it in — are out of scope; they should be reported to the upstream project's security contact.
 
+**TomEE-modified library code is in scope.** TomEE does not ship all bundled libraries unmodified. Where TomEE forks an upstream class (e.g. the BCEL `ConstantPool`/`ConstantPoolGen` fork under `openejb.shade.*`, the patched Tomcat `ServerInfo`), plants a class in an upstream package to reach internals (e.g. `org.apache.bval.jsr.job.ConstraintValidators`, `org.apache.catalina.startup.OpenEJBContextConfig`), shades or relocates a library under TomEE coordinates (e.g. `commons-dbcp2-shade`, `taglibs-shade`), or transforms a bundled jar's bytecode at build time via `tomee-patch-plugin` (including the `javax`→`jakarta` migration), the resulting code is **TomEE's**. A vulnerability introduced or altered by a TomEE patch, fork, shade, or bytecode transform is a TomEE vulnerability and is in scope — even when the affected class sits in an upstream package namespace. Out of scope is limited to flaws present in the upstream artifact as released, unchanged by TomEE.
+
 If you are unsure whether a finding is in TomEE's integration code or in the upstream library, send it to **security@apache.org** and the team will route it.
 
 ## Logging
@@ -113,4 +115,4 @@ The following non-findings are frequently reported despite being invalid under t
 2. Any report that depends on write access to an application's `docBase`, to the OpenEJB `apps/` deployment directory, or to any other location already controlled by an administrative user per the *Administrative users* section above.
 3. Any report that depends on deploying a malicious application — deployed applications are trusted (see *Deployed applications*).
 4. Any report against the EJBd protocol, JMX, the embedded ActiveMQ broker, Derby Network Server, HSQLDB Server, or other management or admin endpoints that assumes they should be safe to expose on an untrusted network without authentication (see *Connectors and transports* and *Embedded network services*).
-5. Any report against bundled third-party libraries — including but not limited to CXF, ActiveMQ, MyFaces, Mojarra, OpenJPA, BVal, HSQLDB, Derby, and MicroProfile implementations — where the root cause is in the upstream library rather than in TomEE's integration code (see *Bundled third-party libraries*).
+5. Any report against bundled third-party libraries — including but not limited to CXF, ActiveMQ, MyFaces, Mojarra, OpenJPA, BVal, HSQLDB, Derby, and MicroProfile implementations — where the root cause is in the upstream library as released rather than in TomEE's integration code or in any code TomEE forks, patches, shades, or byte-code-transforms (see *Bundled third-party libraries*).
